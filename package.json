@@ -1,8 +1,8 @@
 {
   "name": "ccnexus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Self-hosted control plane for CC:Tweaked computers, speakers, turtles and redstone automation.",
+  "description": "Multi-world self-hosted control plane for CC:Tweaked automation, storage, AE2, speakers, monitors and turtles.",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",

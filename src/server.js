@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
@@ -11,6 +12,7 @@ import { loadInstallConfig, saveInstallConfig, openDatabase, testDatabase, safeD
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
+dotenv.config({ path: path.join(root, '.env') });
 const port = Number(process.env.PORT || 3000);
 const dataDir = process.env.CCNEXUS_DATA_DIR || path.join(root, 'data');
 fs.mkdirSync(dataDir, { recursive: true });

@@ -7,6 +7,7 @@ import AdmZip from 'adm-zip';
 const NIGHTLY_API = 'https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest';
 const DENO_API = 'https://api.github.com/repos/denoland/deno/releases/latest';
 const USER_AGENT = 'CCNexus/0.3 (+https://github.com/NekoSuneProjects/CCNexus)';
+const NIGHTLY_VERSION_RE = /^\d{4}\.\d{2}\.\d{2}\.\d{6}$/;
 
 function enabled(name, fallback = true) {
   const raw = process.env[name];
@@ -86,6 +87,7 @@ export class MediaToolchain {
     this.ytdlp = process.env.YTDLP_BIN || path.join(this.toolsDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
     this.deno = process.env.DENO_BIN || path.join(this.toolsDir, process.platform === 'win32' ? 'deno.exe' : 'deno');
     this.cookiesFile = process.env.YTDLP_COOKIES_FILE || path.join(dataDir, 'youtube-cookies.txt');
+    this.ytdlpChannel = String(process.env.YTDLP_CHANNEL || 'nightly').trim() || 'nightly';
     this.preparePromise = null;
     this.info = { ytdlp: null, deno: null, cookies: null };
   }
@@ -108,27 +110,62 @@ export class MediaToolchain {
     return this.status();
   }
 
-  async prepareYtDlp() {
-    if (process.env.YTDLP_BIN) {
-      const v = await run(this.ytdlp, ['--version'], 20_000);
-      if (v.code !== 0) throw new Error(v.stderr || 'configured YTDLP_BIN failed');
-      this.info.ytdlp = { path: this.ytdlp, version: v.stdout, source: 'environment' };
-      return;
-    }
-    if (!fs.existsSync(this.ytdlp)) await this.downloadYtDlpNightly();
-    if (enabled('YTDLP_AUTO_UPDATE', true)) {
-      const channel = String(process.env.YTDLP_CHANNEL || 'nightly').trim() || 'nightly';
-      const update = await run(this.ytdlp, ['--update-to', channel], 180_000);
-      if (update.code !== 0) console.warn(`[CCNexus media tools] yt-dlp update check failed: ${update.stderr || update.stdout}`);
-    }
+  async ytDlpVersion() {
     const v = await run(this.ytdlp, ['--version'], 20_000);
-    if (v.code !== 0) throw new Error(v.stderr || 'downloaded yt-dlp failed');
-    this.info.ytdlp = { path: this.ytdlp, version: v.stdout, source: 'managed-nightly' };
+    if (v.code !== 0) throw new Error(v.stderr || 'yt-dlp --version failed');
+    return v.stdout.split(/\r?\n/)[0].trim();
   }
 
-  async downloadYtDlpNightly() {
-    console.log('[CCNexus media tools] Downloading latest yt-dlp nightly...');
-    const release = await fetchJson(NIGHTLY_API);
+  async prepareYtDlp() {
+    if (process.env.YTDLP_BIN) {
+      const version = await this.ytDlpVersion();
+      this.info.ytdlp = { path: this.ytdlp, version, source: 'environment', channel: 'external', verified: false };
+      return;
+    }
+
+    const channel = this.ytdlpChannel;
+    if (!fs.existsSync(this.ytdlp)) {
+      if (channel === 'nightly') await this.downloadYtDlpNightly();
+      else throw new Error(`managed yt-dlp is missing and automatic download only supports the nightly channel (requested ${channel})`);
+    }
+
+    let version = await this.ytDlpVersion();
+    if (channel === 'nightly' && !NIGHTLY_VERSION_RE.test(version)) {
+      console.warn(`[CCNexus media tools] Managed yt-dlp ${version} is not a nightly build; replacing it with the official nightly binary`);
+      await this.downloadYtDlpNightly();
+      version = await this.ytDlpVersion();
+    }
+
+    let expectedVersion = null;
+    if (enabled('YTDLP_AUTO_UPDATE', true)) {
+      const update = await run(this.ytdlp, ['--update-to', channel], 180_000);
+      if (update.code !== 0) console.warn(`[CCNexus media tools] yt-dlp ${channel} update check failed: ${update.stderr || update.stdout}`);
+      version = await this.ytDlpVersion();
+
+      if (channel === 'nightly') {
+        try {
+          const release = await fetchJson(NIGHTLY_API);
+          expectedVersion = String(release.tag_name || '').trim() || null;
+          if (expectedVersion && version !== expectedVersion) {
+            console.warn(`[CCNexus media tools] yt-dlp nightly mismatch: installed ${version}, latest ${expectedVersion}; downloading the official nightly asset directly`);
+            await this.downloadYtDlpNightly(release);
+            version = await this.ytDlpVersion();
+          }
+        } catch (err) {
+          console.warn(`[CCNexus media tools] Could not verify latest nightly tag: ${err.message}`);
+        }
+      }
+    }
+
+    const nightlyShape = channel === 'nightly' && NIGHTLY_VERSION_RE.test(version);
+    const verified = channel === 'nightly' ? nightlyShape && (!expectedVersion || version === expectedVersion) : true;
+    if (channel === 'nightly' && !nightlyShape) throw new Error(`managed yt-dlp version ${version} is not a nightly build`);
+    this.info.ytdlp = { path: this.ytdlp, version, source: 'managed', channel, verified, expectedVersion };
+  }
+
+  async downloadYtDlpNightly(release = null) {
+    console.log('[CCNexus media tools] Downloading official yt-dlp nightly...');
+    release ||= await fetchJson(NIGHTLY_API);
     const assetName = ytAssetName(release.assets || []);
     if (!assetName) throw new Error(`no compatible nightly asset for ${process.platform}/${process.arch}`);
     const asset = release.assets.find(a => a.name === assetName);

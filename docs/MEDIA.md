@@ -4,14 +4,43 @@ Each Server/World workspace has its own media queue. Queue entries can target on
 
 ## Sources
 
-- YouTube URL — CCNexus resolves the audio source through managed yt-dlp nightly + Deno and streams it through FFmpeg.
+- YouTube URL — CCNexus first asks the Neko downloader `/info` service for a usable audio source, then falls back to managed yt-dlp nightly + Deno when needed.
 - Direct media URL — files/streams readable by FFmpeg.
 - Radio / live stream — treated as a direct long-running stream.
 - TTS — generated locally with `espeak-ng`, then converted by FFmpeg for CC:Tweaked speakers.
 
 The final speaker stream is 48 kHz mono signed 8-bit PCM delivered over the existing device WebSocket.
 
-## Managed yt-dlp nightly + Deno
+## Neko downloader YouTube resolver
+
+By default CCNexus queries:
+
+```text
+https://dl.nekosunevr.co.uk/info?url=<youtube-url>&flat=1&fields=full&cache=1
+```
+
+The resolver prefers formats in this order:
+
+1. `251` — WebM/Opus audio, normally 48 kHz.
+2. `140` — M4A/AAC audio.
+3. `250` — WebM/Opus audio.
+4. `249` — WebM/Opus audio.
+5. `18` — muxed MP4 only as a last fallback when no preferred audio-only format is available.
+6. Otherwise the best remaining non-DRM audio-only format, preferring 48 kHz, then a muxed format if necessary.
+
+CCNexus preserves safe HTTP headers supplied by the `/info` response and performs a tiny range probe of the selected signed media URL from the CCNexus host before handing it to FFmpeg. If the URL is expired, IP-bound to another machine, or otherwise returns an error, CCNexus automatically falls back to its local yt-dlp resolver.
+
+Resolver settings:
+
+```env
+CCNEXUS_YOUTUBE_INFO_ENABLED=true
+CCNEXUS_YOUTUBE_INFO_API=https://dl.nekosunevr.co.uk/info
+CCNEXUS_YOUTUBE_INFO_PROBE=true
+```
+
+Set `CCNEXUS_YOUTUBE_INFO_ENABLED=false` to bypass the external resolver and use local yt-dlp directly.
+
+## Managed yt-dlp nightly + Deno fallback
 
 Standalone and Pterodactyl installs do not need a globally installed yt-dlp or Deno by default. CCNexus keeps managed binaries under `data/tools/`.
 
@@ -23,7 +52,7 @@ On first media initialization CCNexus:
 4. Uses `yt-dlp --update-to nightly` on later starts instead of downloading the full binary every time.
 5. Keeps the previous working binaries when an online update check fails.
 
-YouTube extraction defaults to the equivalent of:
+The local fallback is equivalent to:
 
 ```bash
 yt-dlp \
@@ -37,7 +66,7 @@ yt-dlp \
 
 The dashboard only needs the audio source URL because CCNexus is feeding CC:Tweaked speakers. A download command such as `bv*[height<=1080][vcodec^=avc1]+ba` with `--merge-output-format mp4` is appropriate for saving a 1080p MP4, but would waste bandwidth and processing when only speaker audio is required.
 
-Defaults can be changed in `.env`:
+Local fallback defaults can be changed in `.env`:
 
 ```env
 YTDLP_AUTO_UPDATE=true

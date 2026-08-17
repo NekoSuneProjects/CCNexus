@@ -4,6 +4,29 @@ import bcrypt from 'bcryptjs';
 function now() { return Date.now(); }
 function sessionHash(token) { return crypto.createHash('sha256').update(String(token)).digest('hex'); }
 function cleanUsername(v) { return String(v || '').trim().toLowerCase(); }
+function asList(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return Object.values(value);
+  return [];
+}
+function normalizeDeviceCollections(device, defaultWorldId) {
+  if (!device || typeof device !== 'object') return device;
+  device.worldId ||= defaultWorldId;
+  device.telemetry ||= {};
+  device.peripherals = asList(device.peripherals);
+
+  const telemetry = device.telemetry;
+  telemetry.storage ||= {};
+  telemetry.storage.items = asList(telemetry.storage.items);
+  telemetry.storage.inventories = asList(telemetry.storage.inventories);
+  telemetry.energy = asList(telemetry.energy);
+  telemetry.fluids = asList(telemetry.fluids);
+  telemetry.ae2 ||= {};
+  telemetry.ae2.bridges = asList(telemetry.ae2.bridges);
+  telemetry.ae2.items = asList(telemetry.ae2.items);
+  if (!telemetry.ae2.energy || typeof telemetry.ae2.energy !== 'object' || Array.isArray(telemetry.ae2.energy)) telemetry.ae2.energy = {};
+  return device;
+}
 
 export class Store {
   constructor(persistence, state) {
@@ -52,17 +75,24 @@ export class Store {
     }
     if (!this.state.defaultWorldId || !this.state.worlds[this.state.defaultWorldId]) this.state.defaultWorldId = Object.keys(this.state.worlds)[0];
     for (const device of Object.values(this.state.devices)) {
-      device.worldId ||= this.state.defaultWorldId;
+      normalizeDeviceCollections(device, this.state.defaultWorldId);
       device.online = false;
-      device.telemetry ||= {};
-      device.peripherals ||= [];
+    }
+    for (const media of Object.values(this.state.media)) {
+      if (!media || typeof media !== 'object') continue;
+      media.queue = asList(media.queue);
     }
     this.pruneSessions(false);
     this.state.version = 3;
     this.save();
   }
 
+  normalizeTelemetry() {
+    for (const device of Object.values(this.state.devices)) normalizeDeviceCollections(device, this.state.defaultWorldId);
+  }
+
   save() {
+    this.normalizeTelemetry();
     const snapshot = structuredClone(this.state);
     this._saveChain = this._saveChain.then(() => this.persistence.saveState(snapshot)).catch(err => console.error('[CCNexus] persistence save failed:', err));
     return this._saveChain;
@@ -124,7 +154,7 @@ export class Store {
   }
 
   byToken(token) { return Object.values(this.state.devices).find(d => d.token === token); }
-  safeDevices() { return Object.values(this.state.devices).map(({ token, ...device }) => device); }
+  safeDevices() { this.normalizeTelemetry(); return Object.values(this.state.devices).map(({ token, ...device }) => device); }
 
   async createUser({ username, password, role = 'user' }) {
     const name = cleanUsername(username);
@@ -192,6 +222,7 @@ export class Store {
 
   mediaState(worldId) {
     this.state.media[worldId] ||= { queue: [], current: null, status: 'idle', volume: 1, updatedAt: now() };
+    this.state.media[worldId].queue = asList(this.state.media[worldId].queue);
     return this.state.media[worldId];
   }
 }

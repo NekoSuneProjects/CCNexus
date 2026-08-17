@@ -267,6 +267,7 @@ local function renderMonitor(mon)
         writeAt(mon, 2, 9, job.detail or '', colors.lightGray)
       else writeAt(mon, 2, 6, 'No active job', colors.lightGray) end
     end
+    if h >= 3 then writeAt(mon, 1, h, '[OVR] [INV] [FE] [ME] [JOB]', colors.gray) end
   end)
 end
 
@@ -524,6 +525,23 @@ local function heartbeatLoop()
   while running do sleep(3); if ws then sendTelemetry() else renderMonitors() end end
 end
 
+local function monitorTouchLoop()
+  local pages = { 'overview', 'storage', 'energy', 'ae2', 'farm' }
+  while running do
+    local _, side, x = os.pullEvent('monitor_touch')
+    local mon = peripheral.wrap(side)
+    if mon and mon.getSize then
+      local w = select(1, mon.getSize())
+      local index = math.max(1, math.min(5, math.floor(((tonumber(x) or 1) - 1) * 5 / math.max(1, w)) + 1))
+      monitorPage = pages[index]
+      config.monitorPage = monitorPage
+      local f = fs.open(CONFIG, 'w'); f.write(textutils.serializeJSON(config)); f.close()
+      renderMonitors()
+      send({ type = 'event', message = 'Monitor page changed to ' .. monitorPage })
+    end
+  end
+end
+
 print('CCNexus Agent v0.2.0')
 print('Workspace: ' .. tostring(config.worldName or config.worldId or 'unknown'))
-if turtle then parallel.waitForAny(socketLoop, heartbeatLoop, jobWorker) else parallel.waitForAny(socketLoop, heartbeatLoop) end
+if turtle then parallel.waitForAny(socketLoop, heartbeatLoop, jobWorker, monitorTouchLoop) else parallel.waitForAny(socketLoop, heartbeatLoop, monitorTouchLoop) end

@@ -7,10 +7,11 @@
   "scripts": {
     "start": "node -r dotenv/config src/server.js",
     "dev": "node --watch -r dotenv/config src/server.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check src/database.js && node --check src/media.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check src/database.js && node --check src/toolchain.js && node --check src/media.js && node --check public/app.js"
   },
   "engines": { "node": ">=22" },
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.2",
     "dotenv": "^17.2.2",

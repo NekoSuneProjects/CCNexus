@@ -146,11 +146,42 @@ export class MediaManager {
 
   kill(job) { try { job.source?.kill('SIGKILL'); } catch {} try { job.ffmpeg?.kill('SIGKILL'); } catch {} }
 
+  async chime(deviceIds, volume = 0.8) {
+    const targets = [...new Set(deviceIds)].filter(id => this.socketFor(id)?.readyState === WebSocket.OPEN);
+    if (!targets.length) return { ok: false, reason: 'no-speakers' };
+    const ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', [
+      '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'sine=frequency=660:duration=0.16',
+      '-f', 'lavfi', '-i', 'sine=frequency=880:duration=0.22',
+      '-filter_complex', '[0:a]volume=0.08[a0];[1:a]volume=0.08[a1];[a0][a1]concat=n=2:v=0:a=1[out]',
+      '-map', '[out]', '-ac', '1', '-ar', '48000', '-f', 's8', 'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let error = '';
+    ff.stderr.on('data', d => error += d.toString());
+    ff.stdout.on('data', chunk => {
+      for (let offset = 0; offset < chunk.length; offset += 32768) {
+        const part = chunk.subarray(offset, Math.min(chunk.length, offset + 32768));
+        const payload = JSON.stringify({ type: 'audio_chunk', volume: clamp(volume, 0, 3, 0.8), data: part.toString('base64') });
+        for (const id of targets) {
+          const ws = this.socketFor(id);
+          if (ws?.readyState === WebSocket.OPEN) ws.send(payload);
+        }
+      }
+    });
+    const result = await new Promise(resolve => {
+      ff.on('error', e => { error += e.message; resolve({ code: -1, error }); });
+      ff.on('close', code => resolve({ code, error }));
+    });
+    for (const id of targets) this.send(id, { type: 'audio_stop' });
+    return { ok: result.code === 0, error: result.error.slice(-300) };
+  }
+
   async announce(worldId, text, deviceIds, options = {}) {
     const targets = [...new Set(deviceIds)].filter(id => this.socketFor(id)?.readyState === WebSocket.OPEN);
     if (!targets.length) return { ok: false, reason: 'no-speakers' };
     const current = this.active.get(worldId); const wasPlaying = current && !current.paused;
     if (wasPlaying) { current.ffmpeg.stdout.pause(); for (const id of current.targets) this.send(id, { type: 'audio_stop' }); }
+    if (options.chime !== false) await this.chime(targets, options.chimeVolume ?? 0.8);
     const item = this.normalizeItem({ type: 'tts', text, title: 'Announcement', voice: options.voice || 'en', rate: options.rate || 165, volume: options.volume ?? 1.15 }, targets);
     const transient = await this.spawnItem(item, targets, worldId, true); await transient.done;
     if (wasPlaying && this.active.get(worldId) === current) current.ffmpeg.stdout.resume();

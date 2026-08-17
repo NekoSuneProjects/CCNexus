@@ -3,6 +3,8 @@ services:
     image: ghcr.io/nekosuneprojects/ccnexus:latest
     build: .
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:

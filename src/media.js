@@ -90,7 +90,7 @@ export class MediaManager {
   }
 
   async spawnItem(item, targets, worldId, transient) {
-    let ff, source;
+    let ff, source, resolved = null;
     const targetVolume = () => transient ? item.volume : this.store.mediaState(worldId).volume;
     if (item.type === 'tts') {
       source = spawn(process.env.TTS_BIN || 'espeak-ng', ['--stdout', '-v', item.voice, '-s', String(item.rate), item.text], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -98,7 +98,6 @@ export class MediaManager {
       source.stdout.pipe(ff.stdin);
     } else {
       let input = item.url;
-      let resolved = null;
       if (item.type === 'url' && isYoutube(item.url)) {
         resolved = await this.youtube.resolve(item.url);
         input = resolved.url;
@@ -121,6 +120,14 @@ export class MediaManager {
     source?.stderr.on('data', d => error += d.toString());
     ff.stderr.on('data', d => error += d.toString());
     for (const id of targets) this.send(id, { type: 'audio_stop' });
+    const meta = {
+      type: 'audio_meta',
+      title: item.title,
+      mediaType: item.type,
+      source: resolved?.source || (item.type === 'tts' ? 'local-tts' : item.type === 'radio' ? 'radio-stream' : 'direct-media'),
+      volume: targetVolume()
+    };
+    for (const id of targets) this.send(id, meta);
 
     const framer = this.createAudioFramer(targets, targetVolume, item.type === 'radio' ? RADIO_PREBUFFER_BYTES : AUDIO_CHUNK_BYTES);
     ff.stdout.on('data', chunk => framer.push(chunk));

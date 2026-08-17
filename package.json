@@ -2,7 +2,7 @@
   "name": "ccnexus",
   "version": "0.3.0",
   "private": true,
-  "description": "Self-hosted multi-world control plane for CC:Tweaked automation, storage and audio.",
+  "description": "Self-hosted multi-world control plane for CC:Tweaked automation, storage and media.",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",

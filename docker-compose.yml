@@ -8,6 +8,5 @@ services:
     environment:
       PORT: 3000
       CCNEXUS_PUBLIC_URL: ${CCNEXUS_PUBLIC_URL:-http://localhost:3000}
-      CCNEXUS_ADMIN_TOKEN: ${CCNEXUS_ADMIN_TOKEN:-}
     volumes:
       - ./data:/app/data

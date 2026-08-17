@@ -7,125 +7,131 @@
   <title>CCNexus — Multi-World CC:Tweaked Control</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/v2.css" />
+  <link rel="stylesheet" href="/v3.css" />
 </head>
 <body>
-  <div class="noise"></div>
-  <div id="login" class="modal show">
-    <form id="loginForm" class="modal-card glass">
-      <div class="brand-mark big">CC</div><p class="eyebrow">SECURE CONSOLE</p><h1>Connect to CCNexus</h1>
-      <p class="muted">One self-hosted Nexus for every Minecraft server and single-player world.</p>
-      <label>Admin token<input id="token" type="password" autocomplete="current-password" placeholder="Paste token" required /></label>
-      <button class="btn primary" type="submit">Unlock Nexus</button><p id="loginError" class="danger"></p>
-    </form>
-  </div>
+<div class="noise"></div>
 
-  <div class="shell">
-    <aside class="sidebar glass">
-      <div class="brand"><div class="brand-mark">CC</div><div><strong>CCNexus</strong><span>Multi-World Nexus</span></div></div>
-      <nav id="nav">
-        <button class="nav active" data-view="overview">◈ <span>Overview</span></button>
-        <button class="nav" data-view="storage">▤ <span>Storage & AE2</span></button>
-        <button class="nav" data-view="music">♫ <span>Audio Nexus</span></button>
-        <button class="nav" data-view="turtles">⬡ <span>Turtle Fleet</span></button>
-        <button class="nav" data-view="automation">⌁ <span>Automation</span></button>
-        <button class="nav" data-view="monitors">▣ <span>Monitors</span></button>
-        <button class="nav" data-view="devices">▦ <span>Devices</span></button>
-        <button class="nav" data-view="worlds">◇ <span>Servers / Worlds</span></button>
-        <button class="nav" data-view="setup">⚙ <span>Setup</span></button>
-      </nav>
-      <div class="side-foot"><div class="pulse-dot"></div><span>Central Nexus online</span><small>Cached data survives world shutdown</small></div>
-    </aside>
-
-    <main>
-      <header class="topbar">
-        <div><p class="eyebrow" id="viewEyebrow">WORLD STATUS</p><h1 id="viewTitle">Command Overview</h1></div>
-        <div class="top-actions world-actions">
-          <label class="world-picker"><span>Workspace</span><select id="worldSelect"></select></label>
-          <span class="chip"><i class="live"></i><b id="onlineCount">0</b> online</span>
-          <button id="pairBtn" class="btn primary">+ Pair device</button>
+<div id="setupModal" class="modal">
+  <form id="setupForm" class="modal-card glass setup-card">
+    <div class="brand-mark big">CC</div><p class="eyebrow">FIRST BOOT</p><h1>Build your Nexus</h1>
+    <p class="muted">Choose where CCNexus stores accounts, worlds, device credentials, queues and cached telemetry, then create the first Administrator.</p>
+    <div class="setup-grid">
+      <div class="stack">
+        <label>Database<select id="dbType"><option value="sqlite">SQLite</option><option value="mysql">MySQL / MariaDB</option><option value="postgres">PostgreSQL</option><option value="mongodb">MongoDB</option></select></label>
+        <div id="sqlLiteFields"><label>SQLite file<input id="dbFile" value="ccnexus.sqlite" placeholder="ccnexus.sqlite" /></label></div>
+        <div id="networkDbFields" class="db-fields hidden">
+          <div class="triple"><label>Host<input id="dbHost" value="127.0.0.1" /></label><label>Port<input id="dbPort" type="number" value="3306" /></label><label>Database<input id="dbName" value="ccnexus" /></label></div>
+          <div class="two-input"><label>User<input id="dbUser" /></label><label>Password<input id="dbPassword" type="password" /></label></div>
+          <label class="inline-check"><input id="dbSSL" type="checkbox" /> Use TLS/SSL</label>
         </div>
-      </header>
+        <div id="mongoFields" class="db-fields hidden"><label>MongoDB URI (optional)<input id="dbUri" placeholder="mongodb://user:pass@host:27017" /></label><p class="muted mini">Leave URI empty to use the host/port/user/password fields above.</p></div>
+        <button id="testDatabase" class="btn" type="button">Test database connection</button><span id="dbTestResult" class="muted"></span>
+      </div>
+      <div class="stack admin-create">
+        <p class="eyebrow">OWNER ACCOUNT</p><label>Admin username<input id="setupUsername" autocomplete="username" value="admin" required /></label>
+        <label>Password<input id="setupPassword" type="password" autocomplete="new-password" minlength="12" required /></label>
+        <label>Confirm password<input id="setupPassword2" type="password" autocomplete="new-password" minlength="12" required /></label>
+        <div class="notice">The first account is an <b>Administrator</b>. More Admin/User accounts can be created later from Admin Control.</div>
+        <button class="btn primary" type="submit">Create CCNexus</button><p id="setupError" class="danger"></p>
+      </div>
+    </div>
+  </form>
+</div>
 
-      <section id="overview" class="view active">
-        <div class="hero-grid">
-          <article class="card hero glass"><div><p class="eyebrow">NEXUS CORE 0.2</p><h2>Every Minecraft world,<br><em>one control plane.</em></h2><p class="muted">Switch between servers, keep offline telemetry, control CC:Tweaked hardware, inspect storage and dispatch automation from one self-hosted dashboard.</p><div class="row hero-badges"><span class="chip">Multi-world</span><span class="chip">Offline cache</span><span class="chip">Peripheral-aware</span></div></div><div class="cube-wrap"><div class="cube"></div><div class="orbit"></div></div></article>
-          <article class="card stat glass"><span class="icon">▦</span><div><small>Linked devices</small><strong id="deviceCount">0</strong></div><div class="spark"></div></article>
-          <article class="card stat glass"><span class="icon">⚡</span><div><small>Forge Energy</small><strong id="energyStat">0</strong><small>FE cached</small></div><div class="spark alt"></div></article>
-          <article class="card stat glass"><span class="icon">⬡</span><div><small>Automation turtles</small><strong id="turtleCount">0</strong></div><div class="spark"></div></article>
-        </div>
-        <div class="two-col">
-          <article class="card glass"><div class="card-head"><div><p class="eyebrow">CURRENT WORKSPACE</p><h3 id="worldHeading">Minecraft World</h3></div><span id="worldStatus" class="chip">offline cache</span></div><div id="overviewDevices" class="device-list empty">No devices paired yet.</div></article>
-          <article class="card glass"><div class="card-head"><div><p class="eyebrow">ACTIVITY</p><h3>Nexus feed</h3></div></div><div id="activity" class="timeline empty">No activity yet.</div></article>
-        </div>
-      </section>
+<div id="login" class="modal">
+  <form id="loginForm" class="modal-card glass">
+    <div class="brand-mark big">CC</div><p class="eyebrow">SECURE CONSOLE</p><h1>Sign in to CCNexus</h1>
+    <p class="muted">Use the account created during first boot or an account created by an Administrator.</p>
+    <label>Username<input id="loginUser" autocomplete="username" required /></label>
+    <label>Password<input id="loginPass" type="password" autocomplete="current-password" required /></label>
+    <button class="btn primary" type="submit">Enter Nexus</button><p id="loginError" class="danger"></p>
+  </form>
+</div>
 
-      <section id="storage" class="view">
-        <div class="storage-stats">
-          <article class="card glass mini-stat"><span>▤</span><div><small>Item types</small><strong id="itemTypes">0</strong></div></article>
-          <article class="card glass mini-stat"><span>⚡</span><div><small>Forge Energy</small><strong id="feStored">0 FE</strong><small id="feCapacity">capacity unknown</small></div></article>
-          <article class="card glass mini-stat"><span>◈</span><div><small>ME Energy</small><strong id="meEnergy">0</strong><small id="meCapacity">Advanced Peripherals bridge</small></div></article>
-          <article class="card glass mini-stat"><span>⌘</span><div><small>ME Bridges</small><strong id="meBridgeCount">0</strong></div></article>
-        </div>
-        <div class="two-col storage-layout">
-          <article class="card glass"><div class="card-head"><div><p class="eyebrow">GLOBAL ITEM INDEX</p><h2>Inventory & ME Storage</h2></div><button id="scanStorage" class="btn">↻ Scan now</button></div>
-            <input id="storageSearch" class="search" placeholder="Search cobblestone, minecraft:diamond, ingot..." />
-            <div class="storage-tabs"><button class="tab active" data-storage-filter="all">All</button><button class="tab" data-storage-filter="ae2">AE2 / ME</button><button class="tab" data-storage-filter="inventory">Inventories</button><button class="tab" data-storage-filter="craftable">Craftable</button></div>
-            <div id="storageTable" class="table-wrap storage-table"></div>
-          </article>
-          <article class="card glass"><p class="eyebrow">APPLIED ENERGISTICS 2</p><h2>ME Craft Terminal</h2><p class="muted">Requires an <b>Advanced Peripherals ME Bridge</b> connected to this world’s ME network.</p>
-            <div class="stack"><label>Bridge computer<select id="aeDevice"></select></label><label>ME Bridge<select id="aeBridge"></select></label><label>Registry item<input id="aeItem" placeholder="minecraft:diamond" /></label><label>Craft amount<input id="aeCount" type="number" min="1" max="1000000" value="1" /></label><button id="craftAe" class="btn primary">Queue ME autocraft</button></div>
-            <div class="notice"><b>Tip:</b> click a craftable item in the storage list to prefill its registry name here.</div>
-            <div id="aeSummary" class="telemetry"></div>
-          </article>
-        </div>
-      </section>
+<div class="shell">
+  <aside class="sidebar glass">
+    <div class="brand"><div class="brand-mark">CC</div><div><strong>CCNexus</strong><span>Multi-World Nexus</span></div></div>
+    <nav id="nav">
+      <button class="nav active" data-view="overview">◈ <span>Overview</span></button>
+      <button class="nav" data-view="storage">▤ <span>Storage & AE2</span></button>
+      <button class="nav" data-view="music">♫ <span>Audio Nexus</span></button>
+      <button class="nav" data-view="turtles">⬡ <span>Turtle Fleet</span></button>
+      <button class="nav" data-view="automation">⌁ <span>Automation</span></button>
+      <button class="nav" data-view="monitors">▣ <span>Monitors</span></button>
+      <button class="nav" data-view="devices">▦ <span>Devices</span></button>
+      <button class="nav" data-view="worlds">◇ <span>Servers / Worlds</span></button>
+      <button class="nav admin-only hidden" data-view="admin">◆ <span>Admin Control</span></button>
+      <button class="nav" data-view="setup">⚙ <span>Setup</span></button>
+    </nav>
+    <div class="side-foot"><div class="pulse-dot"></div><span id="sessionUser">Not signed in</span><small id="sessionRole">CCNexus 0.3</small></div>
+  </aside>
 
-      <section id="music" class="view">
-        <div class="section-grid music-grid">
-          <article class="card glass accent-card"><p class="eyebrow">REMOTE AUDIO</p><h2>Audio Nexus</h2><p class="muted">Route YouTube or direct media to selected speaker computers in the current world.</p><form id="audioForm" class="stack"><label>Media URL<input id="audioUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." required /></label><label>Volume <span id="volumeValue">1.0×</span><input id="volume" type="range" min="0" max="3" value="1" step="0.1" /></label><div><p class="label-title">Speaker computers</p><div id="speakerTargets" class="checks empty"></div></div><div class="row"><button class="btn primary" type="submit">▶ Play stream</button><button id="stopAudio" class="btn" type="button">■ Stop</button></div></form></article>
-          <article class="card glass visualizer-card"><div class="now"><span class="disc">♫</span><div><p class="eyebrow">NOW ROUTING</p><h3 id="nowPlaying">Nothing playing</h3><p class="muted" id="nowTarget">Choose one or more speaker nodes.</p></div></div><div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="route-line"><span>MEDIA</span><b>→</b><span>FFMPEG 48k</span><b>→</b><span>NEXUS</span><b>→</b><span>CC SPEAKER</span></div></article>
-        </div>
-      </section>
+  <main>
+    <header class="topbar">
+      <div><p class="eyebrow" id="viewEyebrow">WORLD STATUS</p><h1 id="viewTitle">Command Overview</h1></div>
+      <div class="top-actions world-actions">
+        <label class="world-picker"><span>Workspace</span><select id="worldSelect"></select></label>
+        <span class="chip"><i class="live"></i><b id="onlineCount">0</b> online</span>
+        <button id="pairBtn" class="btn primary">+ Pair device</button><button id="logoutBtn" class="btn">Sign out</button>
+      </div>
+    </header>
 
-      <section id="turtles" class="view">
-        <div class="two-col turtle-layout">
-          <article class="card glass map-card"><div class="card-head"><div><p class="eyebrow">WORLD TELEMETRY</p><h3>Turtle GPS map</h3></div><span class="chip">workspace isolated</span></div><canvas id="map" width="900" height="520"></canvas><p class="muted mini">Only turtles in the selected Server/World workspace are plotted.</p></article>
-          <article class="card glass"><div class="card-head"><div><p class="eyebrow">MINING</p><h3>Quarry control</h3></div></div><label>Turtle<select id="turtleSelect"></select></label><div class="triple"><label>Width<input id="qWidth" type="number" min="1" max="64" value="8" /></label><label>Length<input id="qLength" type="number" min="1" max="64" value="8" /></label><label>Depth<input id="qDepth" type="number" min="1" max="128" value="8" /></label></div><div class="row wrap"><button id="startQuarry" class="btn primary">Start quarry</button><button id="pauseJob" class="btn">Pause</button><button id="resumeJob" class="btn">Resume</button><button id="stopJob" class="btn danger-btn">Stop</button></div><div id="turtleTelemetry" class="telemetry empty">Select a turtle.</div></article>
-        </div>
-      </section>
+    <section id="overview" class="view active">
+      <div class="hero-grid">
+        <article class="card hero glass"><div><p class="eyebrow">NEXUS CORE 0.3</p><h2>Every Minecraft world,<br><em>one secure control plane.</em></h2><p class="muted">Accounts, persistent database storage, queued audio, TTS, automation and offline telemetry in one self-hosted console.</p><div class="row hero-badges"><span class="chip">Multi-user</span><span class="chip">Multi-world</span><span class="chip">Database backed</span></div></div><div class="cube-wrap"><div class="cube"></div><div class="orbit"></div></div></article>
+        <article class="card stat glass"><span class="icon">▦</span><div><small>Linked devices</small><strong id="deviceCount">0</strong></div><div class="spark"></div></article>
+        <article class="card stat glass"><span class="icon">⚡</span><div><small>Forge Energy</small><strong id="energyStat">0</strong><small>FE cached</small></div><div class="spark alt"></div></article>
+        <article class="card stat glass"><span class="icon">⬡</span><div><small>Automation turtles</small><strong id="turtleCount">0</strong></div><div class="spark"></div></article>
+      </div>
+      <div class="two-col"><article class="card glass"><div class="card-head"><div><p class="eyebrow">CURRENT WORKSPACE</p><h3 id="worldHeading">Minecraft World</h3></div><span id="worldStatus" class="chip">offline cache</span></div><div id="overviewDevices" class="device-list empty"></div></article><article class="card glass"><div class="card-head"><div><p class="eyebrow">ACTIVITY</p><h3>Nexus feed</h3></div></div><div id="activity" class="timeline empty"></div></article></div>
+    </section>
 
-      <section id="automation" class="view">
-        <div class="automation-grid">
-          <article class="card glass"><p class="eyebrow">CROP GRID</p><h2>Farming Turtle</h2><p class="muted">Harvest mature vanilla crops in a serpentine field and replant from one turtle slot. Supports wheat, carrots, potatoes, beetroot and nether wart maturity states.</p><div class="stack"><label>Turtle<select id="farmTurtle"></select></label><div class="triple"><label>Width<input id="farmWidth" type="number" min="1" max="64" value="9" /></label><label>Length<input id="farmLength" type="number" min="1" max="64" value="9" /></label><label>Seed slot<input id="farmSeed" type="number" min="1" max="16" value="1" /></label></div><div class="triple"><label>Cycles<input id="farmCycles" type="number" min="1" max="100" value="1" /></label><label>Wait (sec)<input id="farmInterval" type="number" min="0" max="86400" value="0" /></label></div><button id="startFarm" class="btn primary">Start crop automation</button></div></article>
-          <article class="card glass"><p class="eyebrow">TREE SERVICE LANE</p><h2>Tree Farming</h2><p class="muted">Place the turtle on a clear lane facing along the row, with trunks/saplings on its <b>right side</b>. It cuts vertical vanilla logs, returns to the lane, replants, then advances.</p><div class="stack"><label>Turtle<select id="treeTurtle"></select></label><div class="triple"><label>Trees<input id="treeCount" type="number" min="1" max="256" value="8" /></label><label>Spacing<input id="treeSpacing" type="number" min="1" max="16" value="4" /></label><label>Sapling slot<input id="treeSeed" type="number" min="1" max="16" value="1" /></label></div><button id="startTrees" class="btn primary">Start tree farm</button></div></article>
-          <article class="card glass"><p class="eyebrow">REDSTONE CONTROL</p><h2>Lights & machines</h2><div class="stack"><label>Device<select id="redstoneDevice"></select></label><label>Side<select id="redstoneSide"><option>top</option><option>bottom</option><option>left</option><option>right</option><option>front</option><option selected>back</option></select></label><label>Signal strength <span id="strengthValue">15</span><input id="strength" type="range" min="0" max="15" value="15" /></label><div class="row"><button id="lightOn" class="btn primary">Power on</button><button id="lightOff" class="btn">Power off</button></div></div></article>
-          <article class="card glass"><p class="eyebrow">CAPABILITY IDEAS</p><h3>Ready to grow</h3><div class="feature-grid"><div>◫<b>Fluid networks</b><span>Tank telemetry is already collected</span></div><div>⚡<b>Power systems</b><span>Generic Forge Energy discovery</span></div><div>⌘<b>Storage logistics</b><span>Inventory transfers can become rules</span></div><div>＋<b>Mod adapters</b><span>Create, RS, reactors and more</span></div></div></article>
-        </div>
-      </section>
+    <section id="storage" class="view">
+      <div class="storage-stats"><article class="card glass mini-stat"><span>▤</span><div><small>Item types</small><strong id="itemTypes">0</strong></div></article><article class="card glass mini-stat"><span>⚡</span><div><small>Forge Energy</small><strong id="feStored">0 FE</strong><small id="feCapacity"></small></div></article><article class="card glass mini-stat"><span>◈</span><div><small>ME Energy</small><strong id="meEnergy">0</strong><small id="meCapacity"></small></div></article><article class="card glass mini-stat"><span>⌘</span><div><small>ME Bridges</small><strong id="meBridgeCount">0</strong></div></article></div>
+      <div class="two-col storage-layout"><article class="card glass"><div class="card-head"><div><p class="eyebrow">GLOBAL ITEM INDEX</p><h2>Inventory & ME Storage</h2></div><button id="scanStorage" class="btn">↻ Scan now</button></div><input id="storageSearch" class="search" placeholder="Search items..." /><div class="storage-tabs"><button class="tab active" data-storage-filter="all">All</button><button class="tab" data-storage-filter="ae2">AE2 / ME</button><button class="tab" data-storage-filter="inventory">Inventories</button><button class="tab" data-storage-filter="craftable">Craftable</button></div><div id="storageTable" class="table-wrap storage-table"></div></article>
+      <article class="card glass"><p class="eyebrow">APPLIED ENERGISTICS 2</p><h2>ME Craft Terminal</h2><div class="stack"><label>Bridge computer<select id="aeDevice"></select></label><label>ME Bridge<select id="aeBridge"></select></label><label>Registry item<input id="aeItem" placeholder="minecraft:diamond" /></label><label>Craft amount<input id="aeCount" type="number" min="1" max="1000000" value="1" /></label><button id="craftAe" class="btn primary">Queue ME autocraft</button></div><div id="aeSummary" class="telemetry"></div></article></div>
+    </section>
 
-      <section id="monitors" class="view">
-        <div class="two-col">
-          <article class="card glass"><p class="eyebrow">IN-WORLD UI</p><h2>Advanced Monitor Dashboards</h2><p class="muted">Turn connected CC:Tweaked monitors into always-on status displays. Choose a computer and a page; every connected monitor on that node refreshes with live/cached telemetry.</p><div class="stack"><label>Monitor computer<select id="monitorDevice"></select></label><label>Dashboard page<select id="monitorPage"><option value="overview">Nexus overview</option><option value="storage">Inventory storage</option><option value="energy">Forge Energy</option><option value="ae2">AE2 / ME storage</option><option value="farm">Automation job</option></select></label><button id="setMonitor" class="btn primary">Deploy monitor page</button></div></article>
-          <article class="card glass monitor-preview"><div class="monitor-screen"><div class="monitor-title">CCNEXUS // OVERVIEW</div><div class="monitor-world" id="monitorPreviewWorld">Minecraft World</div><div class="monitor-line">NEXUS: <b>ONLINE</b></div><div class="monitor-line">FE / ME / STORAGE TELEMETRY</div><div class="monitor-line">AUTOMATION JOB STATUS</div><div class="monitor-foot">Advanced monitors use colour automatically.</div></div><p class="muted">The page is rendered locally by CraftOS, so the in-world monitor continues showing the last refresh even if your browser closes.</p></article>
-        </div>
-      </section>
+    <section id="music" class="view">
+      <div class="audio-layout">
+        <article class="card glass accent-card"><p class="eyebrow">MEDIA ROUTER</p><h2>Audio Nexus</h2><p class="muted">YouTube, direct files and live radio streams share one queue per Server/World workspace.</p>
+          <div class="stack"><label>Source type<select id="mediaType"><option value="url">YouTube / media URL</option><option value="radio">Radio / live stream</option></select></label><label>URL<input id="audioUrl" type="url" placeholder="https://..." /></label><label>Title (optional)<input id="mediaTitle" placeholder="My radio station" /></label><label>Volume <span id="volumeValue">1.0×</span><input id="volume" type="range" min="0" max="3" value="1" step="0.1" /></label><div><p class="label-title">Speaker computers</p><div id="speakerTargets" class="checks empty"></div></div><div class="row wrap"><button id="addQueue" class="btn primary">＋ Add & play</button><button id="addQueueOnly" class="btn">＋ Queue only</button></div></div>
+        </article>
+        <article class="card glass"><p class="eyebrow">TEXT TO SPEECH</p><h2>Nexus Voice</h2><p class="muted">Generate speech locally on the CCNexus host and play it through the selected CC:Tweaked speakers.</p><div class="stack"><label>Message<textarea id="ttsText" rows="5" maxlength="600" placeholder="Dinner is ready at the base..."> </textarea></label><div class="two-input"><label>Voice<input id="ttsVoice" value="en" placeholder="en" /></label><label>Rate<input id="ttsRate" type="number" min="80" max="450" value="165" /></label></div><button id="queueTts" class="btn primary">Speak / add to queue</button></div></article>
+        <article class="card glass media-console"><div class="card-head"><div><p class="eyebrow">NOW PLAYING</p><h2 id="nowPlaying">Idle</h2></div><span id="mediaStatus" class="chip">idle</span></div><p id="nowTarget" class="muted">No media routed.</p><div class="media-controls"><button data-media-action="play" class="btn">▶</button><button data-media-action="pause" class="btn">Ⅱ</button><button data-media-action="resume" class="btn">▷</button><button data-media-action="skip" class="btn">≫</button><button data-media-action="stop" class="btn">■</button><button data-media-action="clear" class="btn danger-btn">Clear</button></div><div id="mediaQueue" class="queue-list empty">Queue empty.</div></article>
+      </div>
+    </section>
 
-      <section id="devices" class="view"><article class="card glass"><div class="card-head"><div><p class="eyebrow">HARDWARE MESH</p><h2>Paired devices</h2></div><button class="btn primary pair-inline">+ Pair to this world</button></div><div id="deviceTable" class="table-wrap"></div></article></section>
+    <section id="turtles" class="view"><div class="two-col turtle-layout"><article class="card glass map-card"><div class="card-head"><div><p class="eyebrow">WORLD TELEMETRY</p><h3>Turtle GPS map</h3></div><span class="chip">workspace isolated</span></div><canvas id="map" width="900" height="520"></canvas></article><article class="card glass"><p class="eyebrow">MINING</p><h3>Quarry control</h3><label>Turtle<select id="turtleSelect"></select></label><div class="triple"><label>Width<input id="qWidth" type="number" min="1" max="64" value="8" /></label><label>Length<input id="qLength" type="number" min="1" max="64" value="8" /></label><label>Depth<input id="qDepth" type="number" min="1" max="128" value="8" /></label></div><div class="row wrap"><button id="startQuarry" class="btn primary">Start quarry</button><button id="pauseJob" class="btn">Pause</button><button id="resumeJob" class="btn">Resume</button><button id="stopJob" class="btn danger-btn">Stop</button></div><div id="turtleTelemetry" class="telemetry empty"></div></article></div></section>
 
-      <section id="worlds" class="view">
-        <div class="two-col">
-          <article class="card glass"><div class="card-head"><div><p class="eyebrow">WORKSPACES</p><h2>Servers & Worlds</h2></div><button id="newWorldBtn" class="btn primary">+ Add world</button></div><div id="worldCards" class="world-list"></div></article>
-          <article class="card glass"><p class="eyebrow">HOW ISOLATION WORKS</p><h3>One Nexus, many Minecraft instances</h3><p class="muted">A pairing code belongs to exactly one workspace. Device IDs, turtles, speakers, ME storage and telemetry stay grouped under that workspace.</p><div class="feature-grid"><div>●<b>Online world</b><span>Full real-time control</span></div><div>◌<b>Offline world</b><span>Last telemetry stays searchable</span></div><div>◇<b>Single player</b><span>Reconnects when the save opens</span></div><div>▦<b>Dedicated server</b><span>Independent CC fleet</span></div></div><div class="notice">Commands cannot execute while Minecraft/CC:Tweaked is offline. CCNexus keeps the last known data so you can still inspect the workspace.</div></article>
-        </div>
-      </section>
+    <section id="automation" class="view"><div class="automation-grid">
+      <article class="card glass"><p class="eyebrow">CROP GRID</p><h2>Farming Turtle</h2><div class="stack"><label>Turtle<select id="farmTurtle"></select></label><div class="triple"><label>Width<input id="farmWidth" type="number" value="9" /></label><label>Length<input id="farmLength" type="number" value="9" /></label><label>Seed slot<input id="farmSeed" type="number" min="1" max="16" value="1" /></label></div><div class="two-input"><label>Cycles<input id="farmCycles" type="number" value="1" /></label><label>Wait (sec)<input id="farmInterval" type="number" value="0" /></label></div><button id="startFarm" class="btn primary">Start crop automation</button></div></article>
+      <article class="card glass"><p class="eyebrow">TREE SERVICE LANE</p><h2>Tree Farming</h2><div class="stack"><label>Turtle<select id="treeTurtle"></select></label><div class="triple"><label>Trees<input id="treeCount" type="number" value="8" /></label><label>Spacing<input id="treeSpacing" type="number" value="4" /></label><label>Sapling slot<input id="treeSeed" type="number" value="1" /></label></div><button id="startTrees" class="btn primary">Start tree farm</button></div></article>
+      <article class="card glass"><p class="eyebrow">REDSTONE CONTROL</p><h2>Lights & machines</h2><div class="stack"><label>Device<select id="redstoneDevice"></select></label><label>Side<select id="redstoneSide"><option>top</option><option>bottom</option><option>left</option><option>right</option><option>front</option><option selected>back</option></select></label><label>Signal strength <span id="strengthValue">15</span><input id="strength" type="range" min="0" max="15" value="15" /></label><div class="row"><button id="lightOn" class="btn primary">Power on</button><button id="lightOff" class="btn">Power off</button></div></div></article>
+    </div></section>
 
-      <section id="setup" class="view"><div class="two-col"><article class="card glass"><p class="eyebrow">INSTALLER</p><h2>Connect CraftOS</h2><ol class="steps"><li><b>Select or create a Server/World</b><span>The workspace picker decides where the new device belongs.</span></li><li><b>Create a pairing code</b><span>Codes are single-use and expire after 10 minutes.</span></li><li><b>Run the installer</b><code id="installCommand">wget run https://your-domain/install.lua</code></li><li><b>Enter domain + code</b><span>The installer learns the workspace automatically.</span></li></ol><button id="copyInstall" class="btn">Copy installer command</button></article><article class="card glass"><p class="eyebrow">INTEGRATIONS</p><h3>What CCNexus can discover</h3><div class="integration-list"><div><b>CC:Tweaked</b><span>Speakers, monitors, inventories, FE, fluids, redstone, turtles</span></div><div><b>Advanced Peripherals + AE2</b><span>ME Bridge items, energy, craftability and autocrafting</span></div><div><b>Other mods</b><span>Capability-based peripherals appear automatically when they expose compatible methods</span></div></div><div class="notice">Large storage networks are sampled every ~15 seconds by the CraftOS agent to avoid hammering the Minecraft server.</div></article></div></section>
-    </main>
-  </div>
+    <section id="monitors" class="view"><div class="two-col"><article class="card glass"><p class="eyebrow">IN-WORLD UI</p><h2>Advanced Monitor Dashboards</h2><div class="stack"><label>Monitor computer<select id="monitorDevice"></select></label><label>Dashboard page<select id="monitorPage"><option value="overview">Nexus overview</option><option value="storage">Inventory storage</option><option value="energy">Forge Energy</option><option value="ae2">AE2 / ME storage</option><option value="farm">Automation job</option></select></label><button id="setMonitor" class="btn primary">Deploy monitor page</button></div></article><article class="card glass monitor-preview"><div class="monitor-screen"><div class="monitor-title">CCNEXUS // OVERVIEW</div><div id="monitorPreviewWorld" class="monitor-world">Minecraft World</div><div class="monitor-line">TOUCH: OVERVIEW / INV / FE / ME / JOB</div><div class="monitor-line">NEXUS: <b>ONLINE</b></div></div></article></div></section>
 
-  <div id="pairModal" class="modal"><div class="modal-card glass"><button class="close" id="closePair">×</button><p class="eyebrow">PAIR TO WORKSPACE</p><h2 id="pairWorldTitle">Pair CC:Tweaked</h2><p class="muted">The code below is locked to the currently selected Server/World.</p><button id="generateCode" class="btn primary">Generate 10-minute code</button><div id="pairCode" class="pair-code">------</div><code id="pairInstall">wget run https://your-domain/install.lua</code></div></div>
-  <div id="worldModal" class="modal"><form id="worldForm" class="modal-card glass"><button type="button" class="close" id="closeWorld">×</button><p class="eyebrow">NEW WORKSPACE</p><h2>Add Minecraft server/world</h2><label>Name<input id="worldName" placeholder="Survival Server" required /></label><label>Type<select id="worldType"><option value="server">Dedicated / multiplayer server</option><option value="singleplayer">Single-player world</option><option value="realm">Realm / hosted world</option><option value="other">Other</option></select></label><label>Server address (optional)<input id="worldAddress" placeholder="play.example.net:25565" /></label><label>Notes<input id="worldNotes" placeholder="Modpack, dimension, owner..." /></label><button class="btn primary" type="submit">Create workspace</button></form></div>
-  <div id="toast" class="toast"></div>
-  <script src="/app.js" type="module"></script>
+    <section id="devices" class="view"><article class="card glass"><div class="card-head"><div><p class="eyebrow">HARDWARE MESH</p><h2>Paired devices</h2></div><button class="btn primary pair-inline">+ Pair device</button></div><div id="deviceTable" class="table-wrap"></div></article></section>
+
+    <section id="worlds" class="view"><article class="card glass"><div class="card-head"><div><p class="eyebrow">MULTI-SERVER</p><h2>Servers & Worlds</h2></div><button id="newWorldBtn" class="btn primary">+ New workspace</button></div><div id="worldCards" class="world-list"></div></article></section>
+
+    <section id="admin" class="view admin-only hidden">
+      <div class="admin-grid">
+        <article class="card glass"><div class="card-head"><div><p class="eyebrow">ACCESS CONTROL</p><h2>Users</h2></div></div><form id="newUserForm" class="stack"><div class="triple"><label>Username<input id="newUsername" required /></label><label>Password<input id="newPassword" type="password" minlength="12" required /></label><label>Role<select id="newRole"><option value="user">User</option><option value="admin">Admin</option></select></label></div><button class="btn primary" type="submit">Create account</button></form><div id="userTable" class="table-wrap"></div></article>
+        <article class="card glass"><p class="eyebrow">DATABASE</p><h2>Persistence</h2><div id="databaseInfo" class="telemetry"></div><p class="muted">Database type is selected during first boot. Credentials are never returned to the browser.</p></article>
+        <article class="card glass fleet-card"><p class="eyebrow">FLEET MAINTENANCE</p><h2>Update / reboot turtles</h2><p class="muted">Schedule a warning first. Online speaker nodes play a gentle notice and local TTS; selected turtles then update their agent and reboot after the grace period.</p><div class="stack"><label>Target workspace<select id="fleetWorld"><option value="all">All workspaces</option></select></label><label>Scope<select id="fleetScope"><option value="turtles">Turtles only</option><option value="all">All CC nodes</option></select></label><label>Warning minutes<input id="fleetMinutes" type="number" min="1" max="60" value="5" /></label><div class="row wrap"><button id="scheduleUpdate" class="btn primary">Schedule update</button><button id="cancelUpdate" class="btn">Cancel update</button><button id="rebootFleet" class="btn danger-btn">Reboot now</button></div></div><div id="updateStatus" class="notice">No update scheduled.</div></article>
+      </div>
+    </section>
+
+    <section id="setup" class="view"><div class="two-col"><article class="card glass"><p class="eyebrow">INSTALLER</p><h2>Connect CraftOS</h2><ol class="steps"><li><b>Select a Server/World workspace</b><span>Every pairing code belongs to that workspace.</span></li><li><b>Create a pairing code</b><span>Use Pair Device above.</span></li><li><b>Run the installer</b><code id="installCommand">wget run https://your-domain/install.lua</code></li></ol><button id="copyInstall" class="btn">Copy installer command</button></article><article class="card glass"><p class="eyebrow">SIGNED IN</p><h3 id="accountSummary">User</h3><p class="muted">Normal Users can configure integrations and world controls. Administrators also manage accounts and fleet maintenance.</p></article></div></section>
+  </main>
+</div>
+
+<div id="pairModal" class="modal"><div class="modal-card glass"><button class="close" id="closePair">×</button><p class="eyebrow">NEW DEVICE</p><h2 id="pairWorldTitle">Pair CC:Tweaked</h2><button id="generateCode" class="btn primary">Generate 10-minute code</button><div id="pairCode" class="pair-code">------</div><code id="pairInstall">wget run https://your-domain/install.lua</code></div></div>
+<div id="worldModal" class="modal"><form id="worldForm" class="modal-card glass"><button class="close" id="closeWorld" type="button">×</button><p class="eyebrow">NEW WORKSPACE</p><h2>Add Minecraft instance</h2><div class="stack"><label>Name<input id="worldName" required /></label><label>Type<select id="worldType"><option value="server">Dedicated / multiplayer server</option><option value="singleplayer">Single-player world</option><option value="realm">Realm</option><option value="other">Other</option></select></label><label>Address / note<input id="worldAddress" /></label><label>Notes<input id="worldNotes" /></label><button class="btn primary" type="submit">Create workspace</button></div></form></div>
+<div id="toast" class="toast"></div>
+<script src="/app.js" type="module"></script>
 </body>
 </html>

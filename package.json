@@ -1,17 +1,22 @@
 {
   "name": "ccnexus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Multi-world self-hosted control plane for CC:Tweaked automation, storage, AE2, speakers, monitors and turtles.",
+  "description": "Self-hosted multi-world control plane for CC:Tweaked automation, storage and audio.",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check src/database.js && node --check src/media.js && node --check public/app.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.2",
     "express": "^5.1.0",
+    "mongodb": "^7.5.0",
+    "mysql2": "^3.23.2",
+    "pg": "^8.22.0",
     "ws": "^8.18.3"
   }
 }

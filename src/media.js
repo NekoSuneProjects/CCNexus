@@ -3,9 +3,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { MediaToolchain } from './toolchain.js';
+import { YoutubeResolver } from './youtube-resolver.js';
 
 function clamp(v, min, max, fallback) { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
 function isYoutube(url) { return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(String(url || '')); }
+function ffmpegHeaders(headers = {}) {
+  const lines = Object.entries(headers).filter(([, value]) => typeof value === 'string' && value).map(([key, value]) => `${key}: ${value}`);
+  return lines.length ? `${lines.join('\r\n')}\r\n` : '';
+}
 
 // CC:Tweaked plays 48 kHz signed 8-bit PCM and only buffers one playAudio call
 // at a time. Keep packets large enough to avoid stutter, while staying well
@@ -22,6 +27,7 @@ export class MediaManager {
     this.active = new Map();
     const dataDir = process.env.CCNEXUS_DATA_DIR || path.resolve(process.cwd(), 'data');
     this.tools = new MediaToolchain({ dataDir });
+    this.youtube = new YoutubeResolver({ tools: this.tools });
     this.tools.prepare().then(info => {
       const yt = info.ytdlp ? `${info.ytdlp.version}` : 'unavailable';
       const deno = info.deno ? `${info.deno.version}` : 'unavailable';
@@ -90,11 +96,18 @@ export class MediaManager {
       source.stdout.pipe(ff.stdin);
     } else {
       let input = item.url;
-      if (item.type === 'url' && isYoutube(item.url)) input = await this.resolveYoutube(item.url);
+      let resolved = null;
+      if (item.type === 'url' && isYoutube(item.url)) {
+        resolved = await this.youtube.resolve(item.url);
+        input = resolved.url;
+        if ((!item.title || item.title === 'YouTube') && resolved.title) item.title = resolved.title.slice(0, 160);
+      }
       const liveInput = item.type === 'radio';
       const inputArgs = liveInput
         ? ['-reconnect', '1', '-reconnect_at_eof', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5']
         : ['-re'];
+      const headerBlock = ffmpegHeaders(resolved?.headers);
+      if (headerBlock) inputArgs.push('-headers', headerBlock);
       ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', [
         '-hide_banner', '-loglevel', 'error',
         ...inputArgs, '-i', input,
@@ -116,8 +129,7 @@ export class MediaManager {
     ff.on('error', e => { error += e.message; });
     source?.on('error', e => { error += e.message; });
     ff.on('close', code => {
-      if (job.closed) return;
-      job.closed = true;
+      if (job.closed) return; job.closed = true;
       framer.flush();
       for (const id of targets) this.send(id, { type: 'audio_end', ok: code === 0, error: error.slice(-300) });
       resolveDone({ code, error });
@@ -173,23 +185,6 @@ export class MediaManager {
         if (ws?.readyState === WebSocket.OPEN) ws.send(payload);
       }
     }
-  }
-
-  async resolveYoutube(url) {
-    const tools = await this.tools.prepare();
-    if (!tools.ytdlp?.path) throw new Error('yt-dlp is unavailable; check the CCNexus media-tools startup log');
-    const args = [
-      ...(await this.tools.youtubeArgs()),
-      '-f', 'bestaudio/best',
-      '--no-playlist',
-      '-g', url
-    ];
-    const yt = spawn(tools.ytdlp.path, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '', err = '';
-    yt.stdout.on('data', d => out += d.toString()); yt.stderr.on('data', d => err += d.toString());
-    const code = await new Promise((resolve, reject) => { yt.on('close', resolve); yt.on('error', reject); });
-    if (code !== 0 || !out.trim()) throw new Error(`yt-dlp failed: ${err.slice(-500)}`);
-    return out.trim().split(/\r?\n/)[0];
   }
 
   finish(worldId, job) {

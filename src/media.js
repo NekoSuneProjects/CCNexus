@@ -29,7 +29,9 @@ export class MediaManager {
     this.tools = new MediaToolchain({ dataDir });
     this.youtube = new YoutubeResolver({ tools: this.tools });
     this.tools.prepare().then(info => {
-      const yt = info.ytdlp ? `${info.ytdlp.version}` : 'unavailable';
+      const yt = info.ytdlp
+        ? `${info.ytdlp.channel === 'nightly' ? 'nightly ' : ''}${info.ytdlp.version}${info.ytdlp.verified ? ' [verified]' : ''}`
+        : 'unavailable';
       const deno = info.deno ? `${info.deno.version}` : 'unavailable';
       console.log(`[CCNexus media tools] yt-dlp ${yt}; ${deno}`);
     }).catch(err => console.warn(`[CCNexus media tools] startup preparation failed: ${err.message}`));

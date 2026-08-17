@@ -7,6 +7,13 @@ import { MediaToolchain } from './toolchain.js';
 function clamp(v, min, max, fallback) { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
 function isYoutube(url) { return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(String(url || '')); }
 
+// CC:Tweaked plays 48 kHz signed 8-bit PCM and only buffers one playAudio call
+// at a time. Keep packets large enough to avoid stutter, while staying well
+// below the default 128 KiB ComputerCraft websocket message limit after base64
+// and JSON overhead are added.
+const AUDIO_CHUNK_BYTES = Math.round(clamp(process.env.CCNEXUS_AUDIO_CHUNK_BYTES, 16 * 1024, 80 * 1024, 64 * 1024));
+const RADIO_PREBUFFER_BYTES = Math.round(clamp(process.env.CCNEXUS_RADIO_PREBUFFER_BYTES, AUDIO_CHUNK_BYTES, 256 * 1024, 96 * 1024));
+
 export class MediaManager {
   constructor({ store, send, socketFor }) {
     this.store = store;
@@ -84,27 +91,82 @@ export class MediaManager {
     } else {
       let input = item.url;
       if (item.type === 'url' && isYoutube(item.url)) input = await this.resolveYoutube(item.url);
-      ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-re', '-i', input, '-vn', '-ac', '1', '-ar', '48000', '-f', 's8', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const liveInput = item.type === 'radio';
+      const inputArgs = liveInput
+        ? ['-reconnect', '1', '-reconnect_at_eof', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5']
+        : ['-re'];
+      ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', [
+        '-hide_banner', '-loglevel', 'error',
+        ...inputArgs, '-i', input,
+        '-vn', '-ac', '1', '-ar', '48000', '-f', 's8', 'pipe:1'
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
     }
+
     let error = '';
-    source?.stderr.on('data', d => error += d.toString()); ff.stderr.on('data', d => error += d.toString());
+    source?.stderr.on('data', d => error += d.toString());
+    ff.stderr.on('data', d => error += d.toString());
     for (const id of targets) this.send(id, { type: 'audio_stop' });
-    ff.stdout.on('data', chunk => this.sendAudioChunk(targets, chunk, targetVolume()));
+
+    const framer = this.createAudioFramer(targets, targetVolume, item.type === 'radio' ? RADIO_PREBUFFER_BYTES : AUDIO_CHUNK_BYTES);
+    ff.stdout.on('data', chunk => framer.push(chunk));
+
     let resolveDone;
     const done = new Promise(resolve => { resolveDone = resolve; });
-    const job = { id: item.id, item, targets, ffmpeg: ff, source, done, resolveDone, error: () => error, worldId, transient, autoNext: true, paused: false, closed: false };
-    ff.on('error', e => { error += e.message; }); source?.on('error', e => { error += e.message; });
+    const job = { id: item.id, item, targets, ffmpeg: ff, source, framer, done, resolveDone, error: () => error, worldId, transient, autoNext: true, paused: false, closed: false };
+    ff.on('error', e => { error += e.message; });
+    source?.on('error', e => { error += e.message; });
     ff.on('close', code => {
-      if (job.closed) return; job.closed = true;
+      if (job.closed) return;
+      job.closed = true;
+      framer.flush();
       for (const id of targets) this.send(id, { type: 'audio_end', ok: code === 0, error: error.slice(-300) });
       resolveDone({ code, error });
     });
     return job;
   }
 
+  createAudioFramer(targets, volumeFn, initialBufferBytes = AUDIO_CHUNK_BYTES) {
+    let pending = Buffer.alloc(0);
+    let started = initialBufferBytes <= 0;
+
+    const emit = part => {
+      if (!part.length) return;
+      const payload = JSON.stringify({ type: 'audio_chunk', volume: volumeFn(), data: part.toString('base64') });
+      for (const id of targets) {
+        const ws = this.socketFor(id);
+        if (ws?.readyState === WebSocket.OPEN) ws.send(payload);
+      }
+    };
+
+    const drain = () => {
+      if (!started) {
+        if (pending.length < initialBufferBytes) return;
+        started = true;
+      }
+      while (pending.length >= AUDIO_CHUNK_BYTES) {
+        emit(pending.subarray(0, AUDIO_CHUNK_BYTES));
+        pending = pending.subarray(AUDIO_CHUNK_BYTES);
+      }
+    };
+
+    return {
+      push: chunk => {
+        if (!chunk?.length) return;
+        pending = pending.length ? Buffer.concat([pending, chunk]) : Buffer.from(chunk);
+        drain();
+      },
+      flush: () => {
+        started = true;
+        drain();
+        if (pending.length) emit(pending);
+        pending = Buffer.alloc(0);
+      }
+    };
+  }
+
   sendAudioChunk(targets, chunk, volume) {
-    for (let offset = 0; offset < chunk.length; offset += 32768) {
-      const part = chunk.subarray(offset, Math.min(chunk.length, offset + 32768));
+    for (let offset = 0; offset < chunk.length; offset += AUDIO_CHUNK_BYTES) {
+      const part = chunk.subarray(offset, Math.min(chunk.length, offset + AUDIO_CHUNK_BYTES));
       const payload = JSON.stringify({ type: 'audio_chunk', volume, data: part.toString('base64') });
       for (const id of targets) {
         const ws = this.socketFor(id);

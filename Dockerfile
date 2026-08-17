@@ -5,7 +5,7 @@ COPY package.json ./
 RUN npm install --omit=dev
 
 FROM node:22-bookworm-slim
-ENV NODE_ENV=production PORT=3000 CCNEXUS_DATA_DIR=/app/data
+ENV NODE_ENV=production CCNEXUS_DATA_DIR=/app/data
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg espeak-ng python3 python3-venv ca-certificates \
   && python3 -m venv /opt/yt-dlp \
   && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp \
@@ -20,6 +20,5 @@ COPY lua ./lua
 COPY docs ./docs
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
-EXPOSE 3000
 VOLUME ["/app/data"]
-CMD ["node","src/server.js"]
+CMD ["npm","start"]

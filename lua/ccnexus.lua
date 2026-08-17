@@ -8,11 +8,15 @@ cf.close()
 local running = true
 local ws
 local job = nil
+local lastJob = nil
 local worldMeta = { id = config.worldId, name = config.worldName or 'Minecraft World' }
 local monitorPage = config.monitorPage or 'overview'
 local cachedTelemetry = { storage = { items = {}, inventories = {} }, energy = {}, fluids = {}, ae2 = { bridges = {}, items = {} } }
 local lastDeepScan = 0
-local ui = { connection = 'STARTING', audio = 'IDLE', message = 'Starting CCNexus...' }
+local ui = {
+  connection = 'STARTING', audio = 'IDLE', message = 'Starting CCNexus...',
+  trackTitle = 'Nothing playing', trackType = '-', trackSource = '-', volume = 1
+}
 
 -- Decode base64 directly into bytes. The old implementation expanded every
 -- character into a temporary bit-string which could trip CraftOS's
@@ -135,14 +139,14 @@ local function renderTerminal()
 
   local online = ui.connection == 'ONLINE'
   local status = online and 'ONLINE' or ui.connection
-  local statusColor = online and colors.lime or (ui.connection == 'STARTING' and colors.yellow or colors.red)
+  local statusColor = online and colors.lime or (ui.connection == 'STARTING' or ui.connection == 'CONNECTING') and colors.yellow or colors.red
   uiField(t, 3, 'NEXUS', status, statusColor)
   uiField(t, 4, 'NODE', tostring(config.label or ('Computer ' .. os.getComputerID())) .. '  #' .. os.getComputerID(), colors.cyan)
   uiField(t, 5, 'WORLD', tostring(worldMeta.name or config.worldName or config.worldId or 'unknown'), colors.lightBlue)
   uiField(t, 6, 'TYPE', tostring(config.kind or (turtle and 'turtle' or 'computer')):upper(), colors.white)
 
   if h >= 11 then uiWriteLine(t, 8, '  STATUS ' .. string.rep('-', math.max(0, w - 9)), colors.gray, colors.black) end
-  local audioColor = ui.audio == 'PLAYING' and colors.lime or colors.lightGray
+  local audioColor = ui.audio == 'PLAYING' and colors.lime or ui.audio == 'BUFFERING' and colors.yellow or colors.lightGray
   uiField(t, h >= 11 and 9 or 7, 'AUDIO', ui.audio, audioColor)
 
   local jobText = 'IDLE'
@@ -150,7 +154,10 @@ local function renderTerminal()
   if job then
     jobText = tostring(job.type or 'job'):upper() .. ' / ' .. tostring(job.status or 'running'):upper()
     if job.total and tonumber(job.total) and tonumber(job.total) > 0 then jobText = jobText .. '  ' .. tostring(job.done or 0) .. '/' .. tostring(job.total) end
-    jobColor = job.status == 'paused' and colors.yellow or colors.lime
+    jobColor = job.status == 'paused' and colors.yellow or job.status == 'failed' and colors.red or colors.lime
+  elseif lastJob then
+    jobText = tostring(lastJob.type or 'job'):upper() .. ' / ' .. tostring(lastJob.status or 'done'):upper()
+    jobColor = lastJob.status == 'failed' and colors.red or colors.lightGray
   end
   uiField(t, h >= 11 and 10 or 8, 'JOB', jobText, jobColor)
 
@@ -160,6 +167,7 @@ local function renderTerminal()
     uiField(t, 11, 'DEVICES', tostring(#names) .. ' peripherals / ' .. tostring(speakerCount) .. ' speaker(s)', colors.white)
     if turtle then uiField(t, 12, 'FUEL', tostring(turtle.getFuelLevel()), colors.yellow) end
   end
+  if h >= 16 then uiField(t, 13, 'TRACK', ui.trackTitle, ui.audio == 'PLAYING' and colors.cyan or colors.lightGray) end
 
   if h >= 6 then
     local msgY = math.max(3, h - 2)
@@ -301,7 +309,9 @@ local function telemetry()
   local fuel = turtle and turtle.getFuelLevel() or nil
   return {
     position = position(), fuel = fuel, inventory = turtleInventory(),
-    job = job and { type = job.type, status = job.status, done = job.done, total = job.total, detail = job.detail, width = job.width, length = job.length, depth = job.depth } or nil,
+    job = job and { type = job.type, status = job.status, done = job.done, total = job.total, detail = job.detail, error = job.error, width = job.width, length = job.length, depth = job.depth } or nil,
+    lastJob = lastJob,
+    audio = { status = ui.audio, title = ui.trackTitle, mediaType = ui.trackType, source = ui.trackSource, volume = ui.volume },
     storage = cachedTelemetry.storage, energy = cachedTelemetry.energy, fluids = cachedTelemetry.fluids, ae2 = cachedTelemetry.ae2,
     monitorPage = monitorPage
   }
@@ -311,12 +321,22 @@ local function send(obj)
   if ws then pcall(function() ws.send(textutils.serializeJSON(obj)) end) end
 end
 
-local function writeAt(mon, x, y, text, color)
+local function writeAt(mon, x, y, text, color, background)
   local w = select(1, mon.getSize())
   if y < 1 then return end
-  mon.setCursorPos(math.max(1, x), y)
+  if background and mon.isColor and mon.isColor() then mon.setBackgroundColor(background) end
   if color and mon.isColor and mon.isColor() then mon.setTextColor(color) end
+  mon.setCursorPos(math.max(1, x), y)
   mon.write(tostring(text):sub(1, math.max(0, w - x + 1)))
+end
+
+local function fillLine(mon, y, text, color, background)
+  local w = select(1, mon.getSize())
+  if y < 1 then return end
+  if background and mon.isColor and mon.isColor() then mon.setBackgroundColor(background) end
+  if color and mon.isColor and mon.isColor() then mon.setTextColor(color) end
+  mon.setCursorPos(1, y)
+  mon.write((tostring(text or '') .. string.rep(' ', w)):sub(1, w))
 end
 
 local function formatNumber(n)
@@ -327,49 +347,153 @@ local function formatNumber(n)
   return tostring(math.floor(n))
 end
 
+local function energyTotals()
+  local stored, cap = 0, 0
+  for _, e in ipairs(cachedTelemetry.energy or {}) do stored = stored + (tonumber(e.energy) or 0); cap = cap + (tonumber(e.capacity) or 0) end
+  return stored, cap
+end
+
+local function monitorHeader(mon, title)
+  local w = select(1, mon.getSize())
+  local online = ws and 'ONLINE' or 'OFFLINE'
+  local statusColor = ws and colors.lime or colors.red
+  fillLine(mon, 1, ' CCNEXUS // ' .. string.upper(title), colors.white, colors.blue)
+  fillLine(mon, 2, ' ' .. tostring(worldMeta.name or config.worldName or 'Minecraft World'), colors.lightBlue, colors.black)
+  local sx = math.max(2, w - #online - 1)
+  writeAt(mon, sx, 2, online, statusColor, colors.black)
+end
+
+local function monitorFooter(mon, h)
+  if h < 3 then return end
+  fillLine(mon, h, '[OVR] [MUS] [INV] [FE] [ME] [JOB]', colors.gray, colors.black)
+end
+
+local function monitorWrapped(mon, y, text, maxLines, color)
+  local w, h = mon.getSize()
+  local words = {}
+  for word in tostring(text or ''):gmatch('%S+') do table.insert(words, word) end
+  local line, lineNo = '', 0
+  for _, word in ipairs(words) do
+    local candidate = line == '' and word or (line .. ' ' .. word)
+    if #candidate > math.max(1, w - 4) then
+      lineNo = lineNo + 1
+      if lineNo > maxLines or y + lineNo - 1 >= h then break end
+      writeAt(mon, 3, y + lineNo - 1, line, color)
+      line = word
+    else line = candidate end
+  end
+  if line ~= '' and lineNo < maxLines and y + lineNo < h then
+    lineNo = lineNo + 1
+    writeAt(mon, 3, y + lineNo - 1, line, color)
+  end
+  return lineNo
+end
+
 local function renderMonitor(mon)
   pcall(function()
     mon.setTextScale(0.5)
     if mon.isColor and mon.isColor() then mon.setBackgroundColor(colors.black); mon.setTextColor(colors.white) end
     mon.clear()
     local w, h = mon.getSize()
-    writeAt(mon, 2, 1, 'CCNEXUS // ' .. string.upper(monitorPage), colors.cyan)
-    writeAt(mon, 2, 2, (worldMeta and worldMeta.name or config.worldName or 'Minecraft World'), colors.lightBlue)
+    monitorHeader(mon, monitorPage)
+
     if monitorPage == 'overview' then
-      writeAt(mon, 2, 4, config.label or ('Computer ' .. os.getComputerID()), colors.white)
-      writeAt(mon, 2, 5, ws and 'NEXUS: ONLINE' or 'NEXUS: OFFLINE', ws and colors.lime or colors.red)
-      if turtle then writeAt(mon, 2, 7, 'Fuel: ' .. tostring(turtle.getFuelLevel()), colors.yellow) end
-      writeAt(mon, 2, 9, 'Peripherals: ' .. tostring(#peripheral.getNames()), colors.lightGray)
+      local peripherals = peripheral.getNames()
+      local speakers = #getSpeakers()
+      local stored, cap = energyTotals()
+      local ae = cachedTelemetry.ae2 or { bridges = {}, items = {}, energy = {} }
+      local storage = cachedTelemetry.storage or { items = {}, inventories = {} }
+
+      fillLine(mon, 4, ' NODE & NETWORK', colors.cyan, colors.black)
+      writeAt(mon, 3, 5, tostring(config.label or ('Computer ' .. os.getComputerID())) .. '  |  Computer #' .. tostring(os.getComputerID()), colors.white)
+      writeAt(mon, 3, 6, 'Agent v' .. AGENT_VERSION .. '  |  ' .. tostring(config.kind or (turtle and 'turtle' or 'computer')):upper(), colors.lightGray)
+      writeAt(mon, 3, 7, tostring(#peripherals) .. ' peripherals  |  ' .. tostring(speakers) .. ' speaker(s)', colors.lightBlue)
+
+      fillLine(mon, 9, ' STORAGE & POWER', colors.cyan, colors.black)
+      writeAt(mon, 3, 10, 'Inventory: ' .. tostring(#(storage.items or {})) .. ' item types / ' .. tostring(#(storage.inventories or {})) .. ' inventories', colors.white)
+      writeAt(mon, 3, 11, 'Forge Energy: ' .. formatNumber(stored) .. ' / ' .. formatNumber(cap) .. ' FE', cap > 0 and colors.yellow or colors.gray)
+      writeAt(mon, 3, 12, 'AE2: ' .. tostring(#(ae.bridges or {})) .. ' bridge(s) / ' .. tostring(#(ae.items or {})) .. ' indexed items', colors.lightBlue)
+
+      fillLine(mon, 14, ' AUDIO NEXUS', colors.cyan, colors.black)
+      local audioColor = ui.audio == 'PLAYING' and colors.lime or ui.audio == 'BUFFERING' and colors.yellow or colors.lightGray
+      writeAt(mon, 3, 15, ui.audio .. '  |  ' .. tostring(ui.trackTitle or 'Nothing playing'), audioColor)
+      if h >= 18 then writeAt(mon, 3, 16, tostring(ui.trackType or '-'):upper() .. '  |  ' .. tostring(ui.trackSource or '-') .. '  |  volume ' .. tostring(ui.volume or 1) .. 'x', colors.lightGray) end
+
+      if turtle and h >= 20 then
+        fillLine(mon, 18, ' TURTLE', colors.cyan, colors.black)
+        local active = job or lastJob
+        writeAt(mon, 3, 19, 'Fuel: ' .. tostring(turtle.getFuelLevel()) .. '  |  Job: ' .. (active and (tostring(active.type):upper() .. ' / ' .. tostring(active.status):upper()) or 'IDLE'), colors.yellow)
+        if active and active.detail and h >= 21 then writeAt(mon, 3, 20, tostring(active.detail), active.status == 'failed' and colors.red or colors.lightGray) end
+      end
+
+    elseif monitorPage == 'music' then
+      fillLine(mon, 4, ' AUDIO NEXUS // NOW PLAYING', colors.cyan, colors.black)
+      local audioColor = ui.audio == 'PLAYING' and colors.lime or ui.audio == 'BUFFERING' and colors.yellow or colors.lightGray
+      writeAt(mon, 3, 6, 'STATUS', colors.gray)
+      writeAt(mon, 15, 6, ui.audio, audioColor)
+      writeAt(mon, 3, 8, 'NOW PLAYING', colors.gray)
+      monitorWrapped(mon, 10, ui.trackTitle or 'Nothing playing', math.max(1, math.min(4, h - 15)), colors.white)
+      if h >= 16 then
+        writeAt(mon, 3, h - 5, 'TYPE: ' .. tostring(ui.trackType or '-'):upper(), colors.lightBlue)
+        writeAt(mon, math.max(22, math.floor(w / 2)), h - 5, 'SOURCE: ' .. tostring(ui.trackSource or '-'), colors.lightGray)
+        writeAt(mon, 3, h - 4, 'VOLUME: ' .. tostring(ui.volume or 1) .. 'x', colors.yellow)
+        writeAt(mon, 3, h - 3, '48 kHz mono PCM -> CC:Tweaked speaker', colors.gray)
+      end
+
     elseif monitorPage == 'storage' then
-      writeAt(mon, 2, 4, 'LOCAL INVENTORY NETWORK', colors.white)
-      for i = 1, math.min(#cachedTelemetry.storage.items, math.max(0, h - 5)) do
-        local it = cachedTelemetry.storage.items[i]
-        writeAt(mon, 2, 4 + i, formatNumber(it.count) .. '  ' .. (it.displayName or it.name), colors.lightGray)
+      local storage = cachedTelemetry.storage or { items = {}, inventories = {} }
+      fillLine(mon, 4, ' INVENTORY NETWORK', colors.cyan, colors.black)
+      writeAt(mon, 3, 5, tostring(#(storage.items or {})) .. ' indexed item types  |  ' .. tostring(#(storage.inventories or {})) .. ' inventories', colors.lightBlue)
+      local maxRows = math.max(0, h - 8)
+      for i = 1, math.min(#(storage.items or {}), maxRows) do
+        local it = storage.items[i]
+        writeAt(mon, 3, 6 + i, string.format('%-9s  %s', formatNumber(it.count), tostring(it.displayName or it.name)), colors.lightGray)
       end
+
     elseif monitorPage == 'energy' then
-      local stored, cap = 0, 0
-      for _, e in ipairs(cachedTelemetry.energy) do stored = stored + (e.energy or 0); cap = cap + (e.capacity or 0) end
-      writeAt(mon, 2, 4, 'FORGE ENERGY', colors.white)
-      writeAt(mon, 2, 6, formatNumber(stored) .. ' / ' .. formatNumber(cap) .. ' FE', colors.yellow)
-      local pct = cap > 0 and math.floor(stored / cap * 100) or 0
-      writeAt(mon, 2, 7, tostring(pct) .. '% stored', pct < 20 and colors.red or colors.lime)
+      local stored, cap = energyTotals()
+      local pct = cap > 0 and math.max(0, math.min(100, math.floor(stored / cap * 100))) or 0
+      fillLine(mon, 4, ' FORGE ENERGY', colors.cyan, colors.black)
+      writeAt(mon, 3, 6, formatNumber(stored) .. ' / ' .. formatNumber(cap) .. ' FE', colors.yellow)
+      writeAt(mon, 3, 7, tostring(pct) .. '% stored', pct < 20 and colors.red or colors.lime)
+      local barWidth = math.max(10, math.min(w - 6, 50))
+      local filled = math.floor(barWidth * pct / 100)
+      writeAt(mon, 3, 9, '[' .. string.rep('#', filled) .. string.rep('-', barWidth - filled) .. ']', pct < 20 and colors.red or colors.lime)
+      writeAt(mon, 3, 11, tostring(#(cachedTelemetry.energy or {})) .. ' energy peripheral(s) reporting', colors.lightGray)
+
     elseif monitorPage == 'ae2' then
-      writeAt(mon, 2, 4, 'APPLIED ENERGISTICS 2', colors.white)
-      writeAt(mon, 2, 5, 'ME bridges: ' .. tostring(#cachedTelemetry.ae2.bridges), colors.lightBlue)
-      for i = 1, math.min(#cachedTelemetry.ae2.items, math.max(0, h - 6)) do
-        local it = cachedTelemetry.ae2.items[i]
-        writeAt(mon, 2, 5 + i, formatNumber(it.amount or it.count) .. '  ' .. (it.displayName or it.name), it.isCraftable and colors.lime or colors.lightGray)
+      local ae = cachedTelemetry.ae2 or { bridges = {}, items = {}, energy = {} }
+      fillLine(mon, 4, ' APPLIED ENERGISTICS 2', colors.cyan, colors.black)
+      writeAt(mon, 3, 5, tostring(#(ae.bridges or {})) .. ' ME bridge(s)  |  ' .. tostring(#(ae.items or {})) .. ' indexed items', colors.lightBlue)
+      if ae.energy then writeAt(mon, 3, 6, 'ME energy: ' .. formatNumber(ae.energy.stored or 0) .. ' / ' .. formatNumber(ae.energy.capacity or 0), colors.yellow) end
+      local maxRows = math.max(0, h - 9)
+      for i = 1, math.min(#(ae.items or {}), maxRows) do
+        local it = ae.items[i]
+        writeAt(mon, 3, 7 + i, formatNumber(it.amount or it.count) .. '  ' .. tostring(it.displayName or it.name), it.isCraftable and colors.lime or colors.lightGray)
       end
+
     elseif monitorPage == 'farm' then
-      writeAt(mon, 2, 4, 'AUTOMATION JOB', colors.white)
-      if job then
-        writeAt(mon, 2, 6, string.upper(job.type or 'job'), colors.lightBlue)
-        writeAt(mon, 2, 7, 'Status: ' .. tostring(job.status), colors.yellow)
-        writeAt(mon, 2, 8, 'Progress: ' .. tostring(job.done or 0) .. '/' .. tostring(job.total or 0), colors.lime)
-        writeAt(mon, 2, 9, job.detail or '', colors.lightGray)
-      else writeAt(mon, 2, 6, 'No active job', colors.lightGray) end
+      fillLine(mon, 4, ' TURTLE / AUTOMATION JOB', colors.cyan, colors.black)
+      if not turtle then
+        writeAt(mon, 3, 6, 'This node is not a turtle.', colors.lightGray)
+      else
+        writeAt(mon, 3, 6, 'Fuel: ' .. tostring(turtle.getFuelLevel()), colors.yellow)
+        local active = job or lastJob
+        if active then
+          local statusColor = active.status == 'failed' and colors.red or active.status == 'paused' and colors.yellow or colors.lime
+          writeAt(mon, 3, 8, tostring(active.type or 'job'):upper() .. ' / ' .. tostring(active.status or 'unknown'):upper(), statusColor)
+          writeAt(mon, 3, 9, 'Progress: ' .. tostring(active.done or 0) .. ' / ' .. tostring(active.total or 0), colors.white)
+          if active.detail then monitorWrapped(mon, 11, active.detail, math.max(1, h - 14), active.status == 'failed' and colors.red or colors.lightGray) end
+        else
+          writeAt(mon, 3, 8, 'No active or recent automation job.', colors.lightGray)
+        end
+      end
+    else
+      monitorPage = 'overview'
+      writeAt(mon, 3, 5, 'Unknown page; reset to overview.', colors.red)
     end
-    if h >= 3 then writeAt(mon, 1, h, '[OVR] [INV] [FE] [ME] [JOB]', colors.gray) end
+
+    monitorFooter(mon, h)
   end)
 end
 
@@ -405,29 +529,103 @@ end
 local function stopAudio()
   for _, s in ipairs(getSpeakers()) do pcall(function() s.p.stop() end) end
   setUi(nil, 'IDLE', 'Audio stopped')
+  renderMonitors()
+end
+
+local function setJobFailure(reason)
+  reason = tostring(reason or 'Unknown turtle job failure')
+  if job then job.error = reason; job.detail = reason end
+  setUi(nil, nil, reason)
+  return false
+end
+
+local function ensureFuel(minimum)
+  if not turtle then return false, 'This node is not a turtle' end
+  minimum = math.max(1, tonumber(minimum) or 1)
+  local level = turtle.getFuelLevel()
+  if level == 'unlimited' then return true end
+  if tonumber(level) and tonumber(level) >= minimum then return true end
+
+  local selected = turtle.getSelectedSlot()
+  local foundFuel = false
+  for slot = 1, 16 do
+    if turtle.getItemCount(slot) > 0 then
+      turtle.select(slot)
+      local combustible = turtle.refuel(0)
+      if combustible then
+        foundFuel = true
+        while turtle.getItemCount(slot) > 0 do
+          local current = turtle.getFuelLevel()
+          if current == 'unlimited' or (tonumber(current) and tonumber(current) >= minimum) then break end
+          local ok = turtle.refuel(1)
+          if not ok then break end
+        end
+      end
+    end
+    local current = turtle.getFuelLevel()
+    if current == 'unlimited' or (tonumber(current) and tonumber(current) >= minimum) then break end
+  end
+  turtle.select(selected)
+
+  level = turtle.getFuelLevel()
+  if level == 'unlimited' or (tonumber(level) and tonumber(level) >= minimum) then
+    setUi(nil, nil, 'Auto-refuelled turtle to ' .. tostring(level) .. ' fuel')
+    return true
+  end
+  if foundFuel then return false, 'Fuel items were found but the turtle could not refuel enough to move' end
+  return false, 'Out of fuel. Put coal/charcoal or another valid fuel item in the turtle inventory.'
 end
 
 local function waitJob()
   while job and job.status == 'paused' do sleep(0.2) end
-  return job and job.status ~= 'stopping'
+  if not job then return false end
+  if job.status == 'stopping' then job.detail = 'Stopped by user request'; return false end
+  return true
 end
 
 local function safeForward(record)
+  local fuelOk, fuelErr = ensureFuel(1)
+  if not fuelOk then return setJobFailure(fuelErr) end
+  local lastErr = 'movement blocked'
   for _ = 1, 20 do
-    if turtle.forward() then if record then table.insert(record, 'F') end; return true end
-    if turtle.detect() then turtle.dig() else turtle.attack() end
+    local moved, moveErr = turtle.forward()
+    if moved then if record then table.insert(record, 'F') end; return true end
+    if moveErr then lastErr = moveErr end
+    local hasBlock = turtle.detect()
+    if hasBlock then
+      local dug, digErr = turtle.dig()
+      if not dug and digErr then lastErr = digErr end
+    else
+      local attacked, attackErr = turtle.attack()
+      if not attacked and attackErr then lastErr = attackErr end
+    end
+    local ok, err = ensureFuel(1)
+    if not ok then return setJobFailure(err) end
     sleep(0.05)
   end
-  return false
+  return setJobFailure('Cannot move forward: ' .. tostring(lastErr))
 end
 
 local function safeDown()
+  local fuelOk, fuelErr = ensureFuel(1)
+  if not fuelOk then return setJobFailure(fuelErr) end
+  local lastErr = 'movement blocked'
   for _ = 1, 20 do
-    if turtle.down() then return true end
-    if turtle.detectDown() then turtle.digDown() else turtle.attackDown() end
+    local moved, moveErr = turtle.down()
+    if moved then return true end
+    if moveErr then lastErr = moveErr end
+    if turtle.detectDown() then
+      local dug, digErr = turtle.digDown()
+      if not dug and digErr then lastErr = digErr end
+    else
+      local attacked, attackErr = turtle.attackDown()
+      if not attacked and attackErr then lastErr = attackErr end
+    end
+    local ok, err = ensureFuel(1)
+    if not ok then return setJobFailure(err) end
     sleep(0.05)
   end
-  return false
+  return setJobFailure('Cannot move down: ' .. tostring(lastErr))
 end
 
 local function turnLeft(record) turtle.turnLeft(); if record then table.insert(record, 'L') end end
@@ -435,19 +633,30 @@ local function turnRight(record) turtle.turnRight(); if record then table.insert
 
 local function rewindPath(record)
   for i = #record, 1, -1 do
+    if not waitJob() then return false end
     local action = record[i]
     if action == 'F' then
-      if not turtle.back() then turtle.turnLeft(); turtle.turnLeft(); safeForward(); turtle.turnLeft(); turtle.turnLeft() end
+      local fuelOk, fuelErr = ensureFuel(1)
+      if not fuelOk then return setJobFailure(fuelErr) end
+      local moved, moveErr = turtle.back()
+      if not moved then
+        turtle.turnLeft(); turtle.turnLeft()
+        if not safeForward() then return false end
+        turtle.turnLeft(); turtle.turnLeft()
+        if moveErr and job and not job.error then job.detail = 'Recovered return path after: ' .. tostring(moveErr) end
+      end
     elseif action == 'L' then turtle.turnRight()
     elseif action == 'R' then turtle.turnLeft() end
   end
+  return true
 end
 
 local function gridWalk(width, length, callback, record)
   for row = 1, width do
     for col = 1, length do
       if not waitJob() then return false end
-      callback(row, col)
+      local cellOk = callback(row, col)
+      if cellOk == false then return false end
       job.done = math.min(job.total, (job.done or 0) + 1)
       if col < length and not safeForward(record) then return false end
     end
@@ -469,10 +678,8 @@ local function farmCell(seedSlot)
     local age = data.state and tonumber(data.state.age)
     if need and age and age >= need then turtle.digDown(); harvested = true end
   end
-  if harvested and seedSlot then
-    turtle.select(seedSlot)
-    turtle.placeDown()
-  end
+  if harvested and seedSlot then turtle.select(seedSlot); turtle.placeDown() end
+  return true
 end
 
 local function farmWorker(spec)
@@ -483,8 +690,8 @@ local function farmWorker(spec)
     if not waitJob() then return false end
     job.detail = 'Harvest cycle ' .. cycle .. '/' .. cycles
     local path = {}
-    if not gridWalk(spec.width, spec.length, function() farmCell(spec.seedSlot) end, path) then return false end
-    rewindPath(path)
+    if not gridWalk(spec.width, spec.length, function() return farmCell(spec.seedSlot) end, path) then return false end
+    if not rewindPath(path) then return false end
     if cycle < cycles and interval > 0 then
       job.detail = 'Waiting ' .. interval .. 's for next cycle'
       local waited = 0
@@ -499,20 +706,25 @@ local function harvestTree(seedSlot)
   turnRight()
   local ok, data = turtle.inspect()
   if ok and data and logIds[data.name] then
-    turtle.dig()
+    local dug, digErr = turtle.dig()
+    if not dug then turnLeft(); return setJobFailure('Cannot cut tree: ' .. tostring(digErr or 'dig failed')) end
     if safeForward() then
       local height = 0
       while height < 32 do
         local up, block = turtle.inspectUp()
         if not up or not block or not logIds[block.name] then break end
-        turtle.digUp(); if turtle.up() then height = height + 1 else break end
+        local cut, cutErr = turtle.digUp()
+        if not cut then turnLeft(); return setJobFailure('Cannot cut tree above: ' .. tostring(cutErr or 'dig failed')) end
+        local fuelOk, fuelErr = ensureFuel(1); if not fuelOk then turnLeft(); return setJobFailure(fuelErr) end
+        local moved, moveErr = turtle.up(); if moved then height = height + 1 else turnLeft(); return setJobFailure('Cannot move up tree: ' .. tostring(moveErr or 'blocked')) end
       end
-      for _ = 1, height do turtle.down() end
+      for _ = 1, height do local moved, err = turtle.down(); if not moved then turnLeft(); return setJobFailure('Cannot return down tree: ' .. tostring(err or 'blocked')) end end
       turtle.back()
       if seedSlot then turtle.select(seedSlot); turtle.place() end
     end
   end
   turnLeft()
+  return true
 end
 
 local function treeWorker(spec)
@@ -523,49 +735,74 @@ local function treeWorker(spec)
   for i = 1, count do
     if not waitJob() then return false end
     job.detail = 'Tree ' .. i .. '/' .. count
-    harvestTree(spec.seedSlot)
+    if not harvestTree(spec.seedSlot) then return false end
     job.done = i
     if i < count then for _ = 1, spacing do if not safeForward(path) then return false end end end
   end
-  rewindPath(path)
+  if not rewindPath(path) then return false end
+  return true
+end
+
+local function quarryCell()
+  if turtle.detectDown() then
+    local dug, digErr = turtle.digDown()
+    if not dug then return setJobFailure('Cannot mine block below: ' .. tostring(digErr or 'dig failed; check mining tool or block')) end
+  end
   return true
 end
 
 local function quarryWorker(spec)
   job.total = math.max(1, spec.width * spec.length * spec.depth)
   job.done = 0
+  local estimatedMoves = math.max(1, spec.depth * (2 * math.max(0, spec.width * spec.length - 1)) + math.max(0, spec.depth - 1))
+  job.detail = 'Preparing quarry; estimated movement fuel ' .. tostring(estimatedMoves)
+  local fuelOk, fuelErr = ensureFuel(math.min(estimatedMoves, 128))
+  if not fuelOk then return setJobFailure(fuelErr) end
+
   for layer = 1, spec.depth do
     if not waitJob() then return false end
     job.detail = 'Mining layer ' .. layer .. '/' .. spec.depth
     local path = {}
-    if not gridWalk(spec.width, spec.length, function() turtle.digDown() end, path) then return false end
-    -- Return to the same X/Z origin before descending. This makes every layer
-    -- start with the same orientation for both odd and even quarry widths.
-    rewindPath(path)
+    if not gridWalk(spec.width, spec.length, quarryCell, path) then return false end
+    if not rewindPath(path) then return false end
     if layer < spec.depth then
-      turtle.digDown()
+      if turtle.detectDown() then
+        local dug, digErr = turtle.digDown()
+        if not dug then return setJobFailure('Cannot open next quarry layer: ' .. tostring(digErr or 'dig failed')) end
+      end
       if not safeDown() then return false end
     end
   end
+  job.detail = 'Quarry complete'
   return true
 end
 
 local function jobWorker()
   while running do
     local _, spec = os.pullEvent('ccnexus_job')
-    job = spec; job.status = 'running'; job.done = 0; job.total = 1
+    job = spec; job.status = 'running'; job.done = 0; job.total = 1; job.error = nil
     setUi(nil, nil, 'Started ' .. tostring(job.type))
     send({ type = 'event', message = 'Started ' .. tostring(job.type) })
-    local ok = false
-    if spec.type == 'quarry' then ok = quarryWorker(spec)
-    elseif spec.type == 'farm' then ok = farmWorker(spec)
-    elseif spec.type == 'tree_farm' then ok = treeWorker(spec) end
+
+    local workerOk, result = pcall(function()
+      if spec.type == 'quarry' then return quarryWorker(spec)
+      elseif spec.type == 'farm' then return farmWorker(spec)
+      elseif spec.type == 'tree_farm' then return treeWorker(spec)
+      else return setJobFailure('Unknown job type: ' .. tostring(spec.type)) end
+    end)
+    if not workerOk then setJobFailure('Job crashed: ' .. tostring(result)); result = false end
+
     if job then
-      job.status = ok and 'complete' or 'stopped'
-      setUi(nil, nil, (ok and 'Completed ' or 'Stopped ') .. tostring(job.type))
+      local finalStatus
+      if job.status == 'stopping' then finalStatus = 'stopped'; job.detail = job.detail or 'Stopped by user request'
+      elseif result and not job.error then finalStatus = 'complete'
+      else finalStatus = 'failed' end
+      job.status = finalStatus
+      lastJob = { type = job.type, status = finalStatus, done = job.done, total = job.total, detail = job.detail, error = job.error, at = os.epoch('utc') }
+      setUi(nil, nil, (finalStatus == 'complete' and 'Completed ' or finalStatus == 'failed' and 'Failed ' or 'Stopped ') .. tostring(job.type) .. (job.error and (': ' .. job.error) or ''))
       sendTelemetry()
-      send({ type = 'event', message = (ok and 'Completed ' or 'Stopped ') .. tostring(job.type) })
-      sleep(1); job = nil; pcall(renderTerminal)
+      send({ type = 'event', message = (finalStatus == 'complete' and 'Completed ' or finalStatus == 'failed' and 'Failed ' or 'Stopped ') .. tostring(job.type) .. (job.error and (': ' .. job.error) or ''), job = lastJob })
+      sleep(3); job = nil; pcall(renderTerminal); renderMonitors()
     end
   end
 end
@@ -600,9 +837,9 @@ local function handleCommand(c)
   elseif c.type == 'quarry_start' then startJob({ type = 'quarry', width = math.max(1, math.min(64, tonumber(c.width) or 8)), length = math.max(1, math.min(64, tonumber(c.length) or 8)), depth = math.max(1, math.min(128, tonumber(c.depth) or 8)) })
   elseif c.type == 'farm_start' then startJob({ type = 'farm', width = math.max(1, math.min(64, tonumber(c.width) or 8)), length = math.max(1, math.min(64, tonumber(c.length) or 8)), seedSlot = math.max(1, math.min(16, tonumber(c.seedSlot) or 1)), cycles = math.max(1, math.min(100, tonumber(c.cycles) or 1)), interval = math.max(0, math.min(86400, tonumber(c.interval) or 0)) })
   elseif c.type == 'tree_farm_start' then startJob({ type = 'tree_farm', trees = math.max(1, math.min(256, tonumber(c.trees) or 8)), spacing = math.max(1, math.min(16, tonumber(c.spacing) or 4)), seedSlot = math.max(1, math.min(16, tonumber(c.seedSlot) or 1)) })
-  elseif (c.type == 'quarry_pause' or c.type == 'job_pause') and job then job.status = 'paused'
-  elseif c.type == 'job_resume' and job and job.status == 'paused' then job.status = 'running'
-  elseif (c.type == 'quarry_stop' or c.type == 'job_stop') and job then job.status = 'stopping'
+  elseif (c.type == 'quarry_pause' or c.type == 'job_pause') and job then job.status = 'paused'; job.detail = 'Paused by user'; renderMonitors()
+  elseif c.type == 'job_resume' and job and job.status == 'paused' then job.status = 'running'; job.detail = 'Resumed by user'; renderMonitors()
+  elseif (c.type == 'quarry_stop' or c.type == 'job_stop') and job then job.status = 'stopping'; job.detail = 'Stopping by user request...'; renderMonitors()
   elseif c.type == 'monitor_set' then monitorPage = c.page or 'overview'; config.monitorPage = monitorPage; local f = fs.open(CONFIG, 'w'); f.write(textutils.serializeJSON(config)); f.close(); renderMonitors()
   elseif c.type == 'ae2_craft' then handleAeCraft(c)
   elseif c.type == 'scan_now' then lastDeepScan = 0; deepScan(); sendTelemetry()
@@ -616,6 +853,7 @@ local function socketLoop()
     local conn, err = http.websocket({ url = wsUrl, timeout = 15 })
     if not conn then
       setUi('OFFLINE', nil, 'Reconnect in 4s: ' .. tostring(err))
+      renderMonitors()
       sleep(4)
     else
       ws = conn
@@ -626,12 +864,23 @@ local function socketLoop()
         if raw then
           local msg = textutils.unserializeJSON(raw)
           if msg then
-            if msg.type == 'hello' and msg.world then worldMeta = msg.world; setUi('ONLINE', nil, 'Workspace synced: ' .. tostring(msg.world.name or msg.world.id))
+            if msg.type == 'hello' and msg.world then
+              worldMeta = msg.world
+              setUi('ONLINE', nil, 'Workspace synced: ' .. tostring(msg.world.name or msg.world.id))
+              renderMonitors()
             elseif msg.type == 'command' and msg.command then handleCommand(msg.command)
+            elseif msg.type == 'audio_meta' then
+              ui.trackTitle = tostring(msg.title or 'Untitled media')
+              ui.trackType = tostring(msg.mediaType or 'media')
+              ui.trackSource = tostring(msg.source or 'CCNexus')
+              ui.volume = tonumber(msg.volume) or 1
+              setUi(nil, 'BUFFERING', 'Loading: ' .. ui.trackTitle)
+              renderMonitors()
             elseif msg.type == 'audio_chunk' then playChunk(msg)
             elseif msg.type == 'audio_stop' then stopAudio()
             elseif msg.type == 'audio_end' then
               if not msg.ok then setUi(nil, 'IDLE', 'Audio error: ' .. tostring(msg.error)) else setUi(nil, 'IDLE', 'Audio complete') end
+              renderMonitors()
             end
           end
         elseif why and why ~= 'Timed out' then
@@ -654,13 +903,13 @@ local function heartbeatLoop()
 end
 
 local function monitorTouchLoop()
-  local pages = { 'overview', 'storage', 'energy', 'ae2', 'farm' }
+  local pages = { 'overview', 'music', 'storage', 'energy', 'ae2', 'farm' }
   while running do
     local _, side, x = os.pullEvent('monitor_touch')
     local mon = peripheral.wrap(side)
     if mon and mon.getSize then
       local w = select(1, mon.getSize())
-      local index = math.max(1, math.min(5, math.floor(((tonumber(x) or 1) - 1) * 5 / math.max(1, w)) + 1))
+      local index = math.max(1, math.min(#pages, math.floor(((tonumber(x) or 1) - 1) * #pages / math.max(1, w)) + 1))
       monitorPage = pages[index]
       config.monitorPage = monitorPage
       local f = fs.open(CONFIG, 'w'); f.write(textutils.serializeJSON(config)); f.close()

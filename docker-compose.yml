@@ -4,9 +4,9 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
-      PORT: 3000
-      CCNEXUS_PUBLIC_URL: ${CCNEXUS_PUBLIC_URL:-http://localhost:3000}
+      PORT: ${PORT:-3000}
+      CCNEXUS_PUBLIC_URL: ${CCNEXUS_PUBLIC_URL:-}
     volumes:
       - ./data:/app/data

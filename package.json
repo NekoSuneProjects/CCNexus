@@ -5,8 +5,8 @@
   "description": "Self-hosted multi-world control plane for CC:Tweaked automation, storage and media.",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node -r dotenv/config src/server.js",
+    "dev": "node --watch -r dotenv/config src/server.js",
     "check": "node --check src/server.js && node --check src/store.js && node --check src/database.js && node --check src/media.js && node --check public/app.js"
   },
   "engines": { "node": ">=22" },

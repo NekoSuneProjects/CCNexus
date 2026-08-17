@@ -85,8 +85,9 @@ export class MediaToolchain {
     this.toolsDir = path.join(dataDir, 'tools');
     this.ytdlp = process.env.YTDLP_BIN || path.join(this.toolsDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
     this.deno = process.env.DENO_BIN || path.join(this.toolsDir, process.platform === 'win32' ? 'deno.exe' : 'deno');
+    this.cookiesFile = process.env.YTDLP_COOKIES_FILE || path.join(dataDir, 'youtube-cookies.txt');
     this.preparePromise = null;
-    this.info = { ytdlp: null, deno: null };
+    this.info = { ytdlp: null, deno: null, cookies: null };
   }
 
   prepare() {
@@ -102,6 +103,7 @@ export class MediaToolchain {
     const errors = [];
     try { await this.prepareYtDlp(); } catch (err) { errors.push(`yt-dlp: ${err.message}`); }
     try { await this.prepareDeno(); } catch (err) { errors.push(`Deno: ${err.message}`); }
+    this.prepareCookies();
     if (errors.length) console.warn(`[CCNexus media tools] ${errors.join(' | ')}`);
     return this.status();
   }
@@ -169,6 +171,22 @@ export class MediaToolchain {
     }
   }
 
+  prepareCookies() {
+    if (!fs.existsSync(this.cookiesFile)) {
+      this.info.cookies = { enabled: false };
+      return;
+    }
+    try {
+      const first = fs.readFileSync(this.cookiesFile, 'utf8').split(/\r?\n/, 1)[0].trim();
+      const netscape = first === '# Netscape HTTP Cookie File' || first === '# HTTP Cookie File';
+      if (!netscape) console.warn(`[CCNexus media tools] ${this.cookiesFile} does not appear to be a Netscape-format cookies file`);
+      this.info.cookies = { enabled: true, path: this.cookiesFile, netscape };
+    } catch (err) {
+      this.info.cookies = { enabled: false, error: err.message };
+      console.warn(`[CCNexus media tools] Cannot read YouTube cookies file: ${err.message}`);
+    }
+  }
+
   async youtubeArgs() {
     await this.prepare();
     const remote = String(process.env.YTDLP_REMOTE_COMPONENTS || 'ejs:github').trim();
@@ -176,9 +194,10 @@ export class MediaToolchain {
     const args = [];
     if (remote) args.push('--remote-components', remote);
     if (this.info.deno?.path) args.push('--js-runtimes', `deno:${this.info.deno.path}`);
+    if (this.info.cookies?.enabled) args.push('--cookies', this.cookiesFile);
     if (client) args.push('--extractor-args', `youtube:player_client=${client}`);
     return args;
   }
 
-  status() { return { ytdlp: this.info.ytdlp, deno: this.info.deno }; }
+  status() { return { ytdlp: this.info.ytdlp, deno: this.info.deno, cookies: this.info.cookies }; }
 }

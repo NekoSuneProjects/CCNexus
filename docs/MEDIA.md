@@ -4,12 +4,50 @@ Each Server/World workspace has its own media queue. Queue entries can target on
 
 ## Sources
 
-- YouTube URL — CCNexus resolves the audio source through yt-dlp and streams it through FFmpeg.
+- YouTube URL — CCNexus resolves the audio source through managed yt-dlp nightly + Deno and streams it through FFmpeg.
 - Direct media URL — files/streams readable by FFmpeg.
 - Radio / live stream — treated as a direct long-running stream.
 - TTS — generated locally with `espeak-ng`, then converted by FFmpeg for CC:Tweaked speakers.
 
 The final speaker stream is 48 kHz mono signed 8-bit PCM delivered over the existing device WebSocket.
+
+## Managed yt-dlp nightly + Deno
+
+Standalone and Pterodactyl installs do not need a globally installed yt-dlp or Deno by default. CCNexus keeps managed binaries under `data/tools/`.
+
+On first media initialization CCNexus:
+
+1. Downloads the latest official yt-dlp nightly release asset compatible with the host architecture.
+2. Downloads the latest official Deno release when Deno is not already managed by CCNexus.
+3. Makes the managed executables runnable under Linux/macOS.
+4. Uses `yt-dlp --update-to nightly` on later starts instead of downloading the full binary every time.
+5. Keeps the previous working binaries when an online update check fails.
+
+YouTube extraction defaults to the equivalent of:
+
+```bash
+yt-dlp \
+  --remote-components ejs:github \
+  --js-runtimes "deno:/path/to/data/tools/deno" \
+  --extractor-args "youtube:player_client=mweb" \
+  -f "bestaudio/best" \
+  --no-playlist \
+  -g "https://www.youtube.com/watch?v=..."
+```
+
+The dashboard only needs the audio source URL because CCNexus is feeding CC:Tweaked speakers. A download command such as `bv*[height<=1080][vcodec^=avc1]+ba` with `--merge-output-format mp4` is appropriate for saving a 1080p MP4, but would waste bandwidth and processing when only speaker audio is required.
+
+Defaults can be changed in `.env`:
+
+```env
+YTDLP_AUTO_UPDATE=true
+YTDLP_CHANNEL=nightly
+YTDLP_REMOTE_COMPONENTS=ejs:github
+YTDLP_YOUTUBE_CLIENT=mweb
+DENO_AUTO_INSTALL=true
+```
+
+You may opt out of managed binaries by setting `YTDLP_BIN` and/or `DENO_BIN` to your own executables.
 
 ## Controls
 
@@ -23,7 +61,7 @@ Docker images include `espeak-ng`, so TTS does not need an external API key. Sta
 
 ## Fleet update warning
 
-When an Administrator schedules a fleet update, CCNexus sends a spoken announcement to available speaker nodes in the selected workspace(s), for example:
+When an Administrator schedules a fleet update, CCNexus sends a short notification chime followed by a spoken announcement to available speaker nodes in the selected workspace(s), for example:
 
 `CCNexus update scheduled in five minutes. Please allow active turtle jobs to finish or pause them safely.`
 

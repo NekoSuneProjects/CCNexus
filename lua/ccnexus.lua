@@ -12,6 +12,7 @@ local worldMeta = { id = config.worldId, name = config.worldName or 'Minecraft W
 local monitorPage = config.monitorPage or 'overview'
 local cachedTelemetry = { storage = { items = {}, inventories = {} }, energy = {}, fluids = {}, ae2 = { bridges = {}, items = {} } }
 local lastDeepScan = 0
+local ui = { connection = 'STARTING', audio = 'IDLE', message = 'Starting CCNexus...' }
 
 -- Decode base64 directly into bytes. The old implementation expanded every
 -- character into a temporary bit-string which could trip CraftOS's
@@ -97,6 +98,82 @@ local function getSpeakers()
     if methods.playAudio then table.insert(out, { name = name, p = peripheral.wrap(name) }) end
   end
   return out
+end
+
+local function uiWriteLine(t, y, text, fg, bg)
+  local w = select(1, t.getSize())
+  if y < 1 then return end
+  if bg and t.isColor and t.isColor() then t.setBackgroundColor(bg) end
+  if fg and t.isColor and t.isColor() then t.setTextColor(fg) end
+  t.setCursorPos(1, y)
+  t.write((tostring(text or '') .. string.rep(' ', w)):sub(1, w))
+end
+
+local function uiField(t, y, label, value, color)
+  local w, h = t.getSize()
+  if y < 1 or y >= h then return end
+  local prefix = ('  %-10s'):format(label)
+  if t.isColor and t.isColor() then t.setBackgroundColor(colors.black); t.setTextColor(colors.gray) end
+  t.setCursorPos(1, y); t.write(prefix:sub(1, w))
+  if #prefix < w then
+    if t.isColor and t.isColor() then t.setTextColor(color or colors.white) end
+    t.write(tostring(value or '-'):sub(1, w - #prefix))
+  end
+end
+
+local function renderTerminal()
+  local t = term.current()
+  if not t then return end
+  local w, h = t.getSize()
+  if t.isColor and t.isColor() then t.setBackgroundColor(colors.black); t.setTextColor(colors.white) end
+  t.clear()
+
+  local title = ' CCNEXUS NODE'
+  local version = 'v' .. AGENT_VERSION .. ' '
+  local spaces = math.max(1, w - #title - #version)
+  uiWriteLine(t, 1, title .. string.rep(' ', spaces) .. version, colors.white, colors.blue)
+
+  local online = ui.connection == 'ONLINE'
+  local status = online and 'ONLINE' or ui.connection
+  local statusColor = online and colors.lime or (ui.connection == 'STARTING' and colors.yellow or colors.red)
+  uiField(t, 3, 'NEXUS', status, statusColor)
+  uiField(t, 4, 'NODE', tostring(config.label or ('Computer ' .. os.getComputerID())) .. '  #' .. os.getComputerID(), colors.cyan)
+  uiField(t, 5, 'WORLD', tostring(worldMeta.name or config.worldName or config.worldId or 'unknown'), colors.lightBlue)
+  uiField(t, 6, 'TYPE', tostring(config.kind or (turtle and 'turtle' or 'computer')):upper(), colors.white)
+
+  if h >= 11 then uiWriteLine(t, 8, '  STATUS ' .. string.rep('-', math.max(0, w - 9)), colors.gray, colors.black) end
+  local audioColor = ui.audio == 'PLAYING' and colors.lime or colors.lightGray
+  uiField(t, h >= 11 and 9 or 7, 'AUDIO', ui.audio, audioColor)
+
+  local jobText = 'IDLE'
+  local jobColor = colors.lightGray
+  if job then
+    jobText = tostring(job.type or 'job'):upper() .. ' / ' .. tostring(job.status or 'running'):upper()
+    if job.total and tonumber(job.total) and tonumber(job.total) > 0 then jobText = jobText .. '  ' .. tostring(job.done or 0) .. '/' .. tostring(job.total) end
+    jobColor = job.status == 'paused' and colors.yellow or colors.lime
+  end
+  uiField(t, h >= 11 and 10 or 8, 'JOB', jobText, jobColor)
+
+  if h >= 14 then
+    local names = peripheral.getNames()
+    local speakerCount = #getSpeakers()
+    uiField(t, 11, 'DEVICES', tostring(#names) .. ' peripherals / ' .. tostring(speakerCount) .. ' speaker(s)', colors.white)
+    if turtle then uiField(t, 12, 'FUEL', tostring(turtle.getFuelLevel()), colors.yellow) end
+  end
+
+  if h >= 6 then
+    local msgY = math.max(3, h - 2)
+    uiWriteLine(t, msgY, '  ' .. tostring(ui.message or ''):sub(1, math.max(0, w - 2)), colors.lightGray, colors.black)
+    uiWriteLine(t, h, ' Managed remotely by CCNexus', colors.gray, colors.black)
+  end
+  t.setCursorPos(1, h)
+end
+
+local function setUi(connection, audio, message, redraw)
+  if connection then ui.connection = connection end
+  if audio then ui.audio = audio end
+  if message then ui.message = message end
+  if redraw ~= false then pcall(renderTerminal) end
 end
 
 local function position()
@@ -311,6 +388,7 @@ local function sendTelemetry()
 end
 
 local function playChunk(msg)
+  if ui.audio ~= 'PLAYING' then setUi(nil, 'PLAYING', 'Audio stream active') end
   local raw = b64decode(msg.data or '')
   local samples = {}
   for i = 1, #raw do
@@ -326,6 +404,7 @@ end
 
 local function stopAudio()
   for _, s in ipairs(getSpeakers()) do pcall(function() s.p.stop() end) end
+  setUi(nil, 'IDLE', 'Audio stopped')
 end
 
 local function waitJob()
@@ -475,6 +554,7 @@ local function jobWorker()
   while running do
     local _, spec = os.pullEvent('ccnexus_job')
     job = spec; job.status = 'running'; job.done = 0; job.total = 1
+    setUi(nil, nil, 'Started ' .. tostring(job.type))
     send({ type = 'event', message = 'Started ' .. tostring(job.type) })
     local ok = false
     if spec.type == 'quarry' then ok = quarryWorker(spec)
@@ -482,16 +562,17 @@ local function jobWorker()
     elseif spec.type == 'tree_farm' then ok = treeWorker(spec) end
     if job then
       job.status = ok and 'complete' or 'stopped'
+      setUi(nil, nil, (ok and 'Completed ' or 'Stopped ') .. tostring(job.type))
       sendTelemetry()
       send({ type = 'event', message = (ok and 'Completed ' or 'Stopped ') .. tostring(job.type) })
-      sleep(1); job = nil
+      sleep(1); job = nil; pcall(renderTerminal)
     end
   end
 end
 
 local function startJob(spec)
-  if not turtle then send({ type = 'event', message = 'Automation requires a turtle' }); return end
-  if job then send({ type = 'event', message = 'A turtle job is already active' }); return end
+  if not turtle then send({ type = 'event', message = 'Automation requires a turtle' }); setUi(nil, nil, 'Automation requires a turtle'); return end
+  if job then send({ type = 'event', message = 'A turtle job is already active' }); setUi(nil, nil, 'A turtle job is already active'); return end
   os.queueEvent('ccnexus_job', spec)
 end
 
@@ -505,14 +586,15 @@ end
 
 local function handleAeCraft(c)
   local bridge = findAeBridge(c.bridge)
-  if not bridge then send({ type = 'event', message = 'No Advanced Peripherals ME Bridge found' }); return end
+  if not bridge then send({ type = 'event', message = 'No Advanced Peripherals ME Bridge found' }); setUi(nil, nil, 'No ME Bridge found'); return end
   local ok, result, err = call(bridge, 'craftItem', { name = c.item, count = math.max(1, tonumber(c.count) or 1) })
-  if ok then send({ type = 'event', message = 'AE2 craft request sent for ' .. tostring(c.count or 1) .. ' x ' .. tostring(c.item), result = result, detail = err })
-  else send({ type = 'event', message = 'AE2 craft request failed: ' .. tostring(result) }) end
+  if ok then send({ type = 'event', message = 'AE2 craft request sent for ' .. tostring(c.count or 1) .. ' x ' .. tostring(c.item), result = result, detail = err }); setUi(nil, nil, 'AE2 craft request sent')
+  else send({ type = 'event', message = 'AE2 craft request failed: ' .. tostring(result) }); setUi(nil, nil, 'AE2 craft request failed') end
   lastDeepScan = 0
 end
 
 local function handleCommand(c)
+  setUi(nil, nil, 'Command: ' .. tostring(c.type or 'unknown'))
   if c.type == 'redstone' then redstone.setOutput(c.side or 'back', not not c.on)
   elseif c.type == 'redstone_analog' then redstone.setAnalogOutput(c.side or 'back', math.max(0, math.min(15, tonumber(c.strength) or 0)))
   elseif c.type == 'quarry_start' then startJob({ type = 'quarry', width = math.max(1, math.min(64, tonumber(c.width) or 8)), length = math.max(1, math.min(64, tonumber(c.length) or 8)), depth = math.max(1, math.min(128, tonumber(c.depth) or 8)) })
@@ -524,37 +606,51 @@ local function handleCommand(c)
   elseif c.type == 'monitor_set' then monitorPage = c.page or 'overview'; config.monitorPage = monitorPage; local f = fs.open(CONFIG, 'w'); f.write(textutils.serializeJSON(config)); f.close(); renderMonitors()
   elseif c.type == 'ae2_craft' then handleAeCraft(c)
   elseif c.type == 'scan_now' then lastDeepScan = 0; deepScan(); sendTelemetry()
-  elseif c.type == 'reboot' then os.reboot() end
+  elseif c.type == 'reboot' then setUi('RESTARTING', nil, c.update and 'Updating agent and restarting...' or 'Restarting node...'); sleep(0.15); os.reboot() end
 end
 
 local function socketLoop()
   while running do
     local wsUrl = config.server:gsub('^http://', 'ws://'):gsub('^https://', 'wss://') .. '/ws/device?token=' .. textutils.urlEncode(config.token)
+    setUi('CONNECTING', nil, 'Connecting to Nexus...')
     local conn, err = http.websocket({ url = wsUrl, timeout = 15 })
-    if not conn then print('CCNexus reconnect: ' .. tostring(err)); sleep(4)
+    if not conn then
+      setUi('OFFLINE', nil, 'Reconnect in 4s: ' .. tostring(err))
+      sleep(4)
     else
-      ws = conn; print('CCNexus connected: ' .. config.label); sendTelemetry()
+      ws = conn
+      setUi('ONLINE', nil, 'Connected to CCNexus')
+      sendTelemetry()
       while running and ws == conn do
         local raw, why = conn.receive(25)
         if raw then
           local msg = textutils.unserializeJSON(raw)
           if msg then
-            if msg.type == 'hello' and msg.world then worldMeta = msg.world
+            if msg.type == 'hello' and msg.world then worldMeta = msg.world; setUi('ONLINE', nil, 'Workspace synced: ' .. tostring(msg.world.name or msg.world.id))
             elseif msg.type == 'command' and msg.command then handleCommand(msg.command)
             elseif msg.type == 'audio_chunk' then playChunk(msg)
             elseif msg.type == 'audio_stop' then stopAudio()
-            elseif msg.type == 'audio_end' and not msg.ok then print('Audio error: ' .. tostring(msg.error)) end
+            elseif msg.type == 'audio_end' then
+              if not msg.ok then setUi(nil, 'IDLE', 'Audio error: ' .. tostring(msg.error)) else setUi(nil, 'IDLE', 'Audio complete') end
+            end
           end
-        elseif why and why ~= 'Timed out' then break end
+        elseif why and why ~= 'Timed out' then
+          setUi('OFFLINE', nil, 'Socket closed: ' .. tostring(why))
+          break
+        end
       end
       pcall(function() conn.close() end); ws = nil; renderMonitors()
-      if running then sleep(2) end
+      if running then setUi('OFFLINE', nil, 'Disconnected; reconnecting...'); sleep(2) end
     end
   end
 end
 
 local function heartbeatLoop()
-  while running do sleep(3); if ws then sendTelemetry() else renderMonitors() end end
+  while running do
+    sleep(3)
+    pcall(renderTerminal)
+    if ws then sendTelemetry() else renderMonitors() end
+  end
 end
 
 local function monitorTouchLoop()
@@ -569,11 +665,11 @@ local function monitorTouchLoop()
       config.monitorPage = monitorPage
       local f = fs.open(CONFIG, 'w'); f.write(textutils.serializeJSON(config)); f.close()
       renderMonitors()
+      setUi(nil, nil, 'Monitor page: ' .. monitorPage)
       send({ type = 'event', message = 'Monitor page changed to ' .. monitorPage })
     end
   end
 end
 
-print('CCNexus Agent v' .. AGENT_VERSION)
-print('Workspace: ' .. tostring(config.worldName or config.worldId or 'unknown'))
+pcall(renderTerminal)
 if turtle then parallel.waitForAny(socketLoop, heartbeatLoop, jobWorker, monitorTouchLoop) else parallel.waitForAny(socketLoop, heartbeatLoop, monitorTouchLoop) end

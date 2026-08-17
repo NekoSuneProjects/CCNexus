@@ -1,4 +1,5 @@
 local CONFIG = '/ccnexus/config.json'
+local AGENT_VERSION = '0.3.0'
 if not fs.exists(CONFIG) then error('CCNexus config missing. Run the installer again.', 0) end
 local cf = fs.open(CONFIG, 'r')
 local config = textutils.unserializeJSON(cf.readAll())
@@ -12,20 +13,44 @@ local monitorPage = config.monitorPage or 'overview'
 local cachedTelemetry = { storage = { items = {}, inventories = {} }, energy = {}, fluids = {}, ae2 = { bridges = {}, items = {} } }
 local lastDeepScan = 0
 
+-- Decode base64 directly into bytes. The old implementation expanded every
+-- character into a temporary bit-string which could trip CraftOS's
+-- "Too long without yielding" watchdog on normal audio packets.
 local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local b64lookup = {}
+for i = 1, #b64chars do b64lookup[b64chars:sub(i, i)] = i - 1 end
+
+local function cooperativeYield()
+  os.queueEvent('ccnexus_audio_yield')
+  os.pullEvent('ccnexus_audio_yield')
+end
+
 local function b64decode(data)
-  data = string.gsub(data, '[^' .. b64chars .. '=]', '')
-  return (data:gsub('.', function(x)
-    if x == '=' then return '' end
-    local r, f = '', (b64chars:find(x) - 1)
-    for i = 6, 1, -1 do r = r .. (f % 2^i - f % 2^(i - 1) > 0 and '1' or '0') end
-    return r
-  end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
-    if #x ~= 8 then return '' end
-    local c = 0
-    for i = 1, 8 do c = c + (x:sub(i, i) == '1' and 2^(8 - i) or 0) end
-    return string.char(c)
-  end))
+  data = tostring(data or '')
+  local out, n = {}, 0
+  local i, groups = 1, 0
+  while i <= #data do
+    local c1, c2 = data:sub(i, i), data:sub(i + 1, i + 1)
+    local c3, c4 = data:sub(i + 2, i + 2), data:sub(i + 3, i + 3)
+    i = i + 4
+    local a, b = b64lookup[c1], b64lookup[c2]
+    if a and b then
+      n = n + 1; out[n] = string.char(a * 4 + math.floor(b / 16))
+      if c3 ~= '=' and c3 ~= '' then
+        local c = b64lookup[c3]
+        if c then
+          n = n + 1; out[n] = string.char((b % 16) * 16 + math.floor(c / 4))
+          if c4 ~= '=' and c4 ~= '' then
+            local d = b64lookup[c4]
+            if d then n = n + 1; out[n] = string.char((c % 4) * 64 + d) end
+          end
+        end
+      end
+    end
+    groups = groups + 1
+    if groups % 2048 == 0 then cooperativeYield() end
+  end
+  return table.concat(out)
 end
 
 local function methodSet(name)
@@ -282,14 +307,21 @@ end
 
 local function sendTelemetry()
   renderMonitors()
-  send({ type = 'telemetry', label = config.label, kind = config.kind, peripherals = describePeripherals(), telemetry = telemetry() })
+  send({ type = 'telemetry', agentVersion = AGENT_VERSION, label = config.label, kind = config.kind, peripherals = describePeripherals(), telemetry = telemetry() })
 end
 
 local function playChunk(msg)
   local raw = b64decode(msg.data or '')
   local samples = {}
-  for i = 1, #raw do local v = raw:byte(i); if v > 127 then v = v - 256 end; samples[i] = v end
-  for _, s in ipairs(getSpeakers()) do while not s.p.playAudio(samples, msg.volume or 1) do os.pullEvent('speaker_audio_empty') end end
+  for i = 1, #raw do
+    local v = raw:byte(i)
+    if v > 127 then v = v - 256 end
+    samples[i] = v
+    if i % 8192 == 0 then cooperativeYield() end
+  end
+  for _, s in ipairs(getSpeakers()) do
+    while not s.p.playAudio(samples, msg.volume or 1) do os.pullEvent('speaker_audio_empty') end
+  end
 end
 
 local function stopAudio()
@@ -542,6 +574,6 @@ local function monitorTouchLoop()
   end
 end
 
-print('CCNexus Agent v0.2.0')
+print('CCNexus Agent v' .. AGENT_VERSION)
 print('Workspace: ' .. tostring(config.worldName or config.worldId or 'unknown'))
 if turtle then parallel.waitForAny(socketLoop, heartbeatLoop, jobWorker, monitorTouchLoop) else parallel.waitForAny(socketLoop, heartbeatLoop, monitorTouchLoop) end

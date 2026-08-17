@@ -205,6 +205,16 @@ async function executeFleetUpdate() {
   store.state.system.updateSchedule = null; store.save();
 }
 app.post('/api/admin/fleet/reboot', requireAdmin, (req, res) => { const targets = selectFleet({ worldId: req.body?.worldId || 'all', scope: req.body?.scope || 'turtles', onlineOnly: true }); for (const d of targets) send(d.id, { type: 'command', id: crypto.randomUUID(), command: { type: 'reboot' } }); store.addActivity('system', `${req.user.username} rebooted ${targets.length} online node(s)`, { userId: req.user.id }); res.json({ ok: true, targets: targets.length }); });
+app.post('/api/admin/fleet/update/force', requireAdmin, (req, res) => {
+  const worldId = req.body?.worldId || 'all'; const scope = req.body?.scope === 'all' ? 'all' : 'turtles';
+  if (worldId !== 'all' && !requireWorld(worldId, res)) return;
+  if (updateTimer) clearTimeout(updateTimer); updateTimer = null;
+  const oldSchedule = store.state.system.updateSchedule; store.state.system.updateSchedule = null;
+  const targets = selectFleet({ worldId, scope, onlineOnly: true }); const requestedAt = Date.now();
+  for (const d of targets) send(d.id, { type: 'command', id: crypto.randomUUID(), command: { type: 'reboot', update: true, force: true, requestedAt } });
+  store.addActivity('system', `${req.user.username} forced an immediate CCNexus update/restart on ${targets.length} online node(s)`, { userId: req.user.id, worldId, scope, targets: targets.length, cancelledScheduleId: oldSchedule?.id || null });
+  store.save(); res.json({ ok: true, targets: targets.length, cancelledSchedule: Boolean(oldSchedule) });
+});
 app.post('/api/admin/fleet/update', requireAdmin, async (req, res) => {
   if (store.state.system.updateSchedule) return res.status(409).json({ error: 'A fleet update is already scheduled' });
   const minutes = Math.max(1, Math.min(60, Number(req.body?.minutes) || 5)); const worldId = req.body?.worldId || 'all'; const scope = req.body?.scope === 'all' ? 'all' : 'turtles';

@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a new CCNexus device, peripheral, automation, dashboard, or integration feature.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve CCNexus. Please describe the Minecraft automation you want rather than only naming a mod.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should CCNexus do?
+      description: Describe the workflow, controls, telemetry, or dashboard behavior you want.
+      placeholder: "Example: Add a Create train page that shows stations and lets me dispatch a train..."
+    validations:
+      required: true
+  - type: input
+    id: minecraft
+    attributes:
+      label: Minecraft version
+      placeholder: "1.20.1"
+  - type: input
+    id: cct
+    attributes:
+      label: CC:Tweaked version
+      placeholder: "1.120.0"
+  - type: input
+    id: mod
+    attributes:
+      label: Related mod or peripheral
+      placeholder: "CC:Tweaked speaker, Advanced Peripherals, Create, vanilla redstone..."
+  - type: textarea
+    id: ui
+    attributes:
+      label: Dashboard/UI idea
+      description: What controls, cards, charts, maps, or live data would be useful?
+  - type: textarea
+    id: details
+    attributes:
+      label: Extra details
+      description: Add logs, screenshots, links to peripheral documentation, or examples if useful.

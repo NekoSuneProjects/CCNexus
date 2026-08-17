@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#090d14" />
+  <title>CCNexus — CC:Tweaked Control Plane</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="noise"></div>
+  <div id="login" class="modal show">
+    <form id="loginForm" class="modal-card glass">
+      <div class="brand-mark big">CC</div>
+      <p class="eyebrow">SECURE CONSOLE</p>
+      <h1>Connect to CCNexus</h1>
+      <p class="muted">Enter the admin token printed by the server on first boot, or your <code>CCNEXUS_ADMIN_TOKEN</code>.</p>
+      <label>Admin token<input id="token" type="password" autocomplete="current-password" placeholder="Paste token" required /></label>
+      <button class="btn primary" type="submit">Unlock dashboard</button>
+      <p id="loginError" class="danger"></p>
+    </form>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar glass">
+      <div class="brand"><div class="brand-mark">CC</div><div><strong>CCNexus</strong><span>Control Plane</span></div></div>
+      <nav id="nav">
+        <button class="nav active" data-view="overview">◈ <span>Overview</span></button>
+        <button class="nav" data-view="music">♫ <span>Audio Nexus</span></button>
+        <button class="nav" data-view="turtles">⬡ <span>Turtle Fleet</span></button>
+        <button class="nav" data-view="automation">⌁ <span>Automation</span></button>
+        <button class="nav" data-view="devices">▦ <span>Devices</span></button>
+        <button class="nav" data-view="setup">⚙ <span>Setup</span></button>
+      </nav>
+      <div class="side-foot"><div class="pulse-dot"></div><span id="socketStatus">Live control ready</span><small>Self-hosted • Open source</small></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow" id="viewEyebrow">NETWORK STATUS</p><h1 id="viewTitle">Command Overview</h1></div>
+        <div class="top-actions"><span class="chip"><i class="live"></i><b id="onlineCount">0</b> online</span><button id="pairBtn" class="btn primary">+ Pair device</button></div>
+      </header>
+
+      <section id="overview" class="view active">
+        <div class="hero-grid">
+          <article class="card hero glass">
+            <div><p class="eyebrow">NEXUS CORE</p><h2>Your Minecraft world,<br><em>under one console.</em></h2><p class="muted">Control CC:Tweaked computers, speakers, turtles and redstone systems in real time from one self-hosted dashboard.</p></div>
+            <div class="cube-wrap"><div class="cube"></div><div class="orbit"></div></div>
+          </article>
+          <article class="card stat glass"><span class="icon">▦</span><div><small>Linked devices</small><strong id="deviceCount">0</strong></div><div class="spark"></div></article>
+          <article class="card stat glass"><span class="icon">♫</span><div><small>Speakers discovered</small><strong id="speakerCount">0</strong></div><div class="spark alt"></div></article>
+          <article class="card stat glass"><span class="icon">⬡</span><div><small>Turtles online</small><strong id="turtleCount">0</strong></div><div class="spark"></div></article>
+        </div>
+        <div class="two-col">
+          <article class="card glass"><div class="card-head"><div><p class="eyebrow">LIVE NETWORK</p><h3>Device mesh</h3></div><span class="chip">auto-refresh</span></div><div id="overviewDevices" class="device-list empty">No devices paired yet.</div></article>
+          <article class="card glass"><div class="card-head"><div><p class="eyebrow">ACTIVITY</p><h3>Nexus feed</h3></div></div><div id="activity" class="timeline empty">No activity yet.</div></article>
+        </div>
+      </section>
+
+      <section id="music" class="view">
+        <div class="section-grid music-grid">
+          <article class="card glass accent-card">
+            <p class="eyebrow">REMOTE AUDIO</p><h2>Audio Nexus</h2><p class="muted">Send a YouTube link or direct media URL. CCNexus converts it to 48 kHz mono audio and streams it to selected CC:Tweaked speaker computers.</p>
+            <form id="audioForm" class="stack">
+              <label>Media URL<input id="audioUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." required /></label>
+              <label>Volume <span id="volumeValue">1.0×</span><input id="volume" type="range" min="0" max="3" value="1" step="0.1" /></label>
+              <div><p class="label-title">Speaker computers</p><div id="speakerTargets" class="checks empty">Pair a speaker computer first.</div></div>
+              <div class="row"><button class="btn primary" type="submit">▶ Play stream</button><button id="stopAudio" class="btn" type="button">■ Stop</button></div>
+            </form>
+          </article>
+          <article class="card glass visualizer-card"><div class="now"><span class="disc">♫</span><div><p class="eyebrow">NOW ROUTING</p><h3 id="nowPlaying">Nothing playing</h3><p class="muted" id="nowTarget">Choose one or more speaker nodes.</p></div></div><div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="route-line"><span>WEB AUDIO</span><b>→</b><span>FFMPEG 48k</span><b>→</b><span>WEBSOCKET</span><b>→</b><span>CC SPEAKER</span></div></article>
+        </div>
+      </section>
+
+      <section id="turtles" class="view">
+        <div class="two-col turtle-layout">
+          <article class="card glass map-card"><div class="card-head"><div><p class="eyebrow">WORLD TELEMETRY</p><h3>Turtle map</h3></div><span class="chip">GPS aware</span></div><canvas id="map" width="900" height="520"></canvas><p class="muted mini">Absolute positions require a CC:Tweaked GPS constellation. Without GPS, fleet controls still work but the map cannot place a turtle in world coordinates.</p></article>
+          <article class="card glass"><div class="card-head"><div><p class="eyebrow">FLEET</p><h3>Quarry control</h3></div></div><label>Turtle<select id="turtleSelect"></select></label><div class="triple"><label>Width<input id="qWidth" type="number" min="1" max="64" value="8" /></label><label>Length<input id="qLength" type="number" min="1" max="64" value="8" /></label><label>Depth<input id="qDepth" type="number" min="1" max="128" value="8" /></label></div><div class="row"><button id="startQuarry" class="btn primary">Start quarry</button><button id="pauseQuarry" class="btn">Pause</button><button id="stopQuarry" class="btn danger-btn">Stop</button></div><div id="turtleTelemetry" class="telemetry empty">Select an online turtle.</div></article>
+        </div>
+      </section>
+
+      <section id="automation" class="view">
+        <div class="two-col">
+          <article class="card glass"><p class="eyebrow">REDSTONE CONTROL</p><h2>Lights & machines</h2><p class="muted">Use any paired computer as a remote redstone node. Binary and analogue outputs are supported.</p><div class="stack"><label>Device<select id="redstoneDevice"></select></label><label>Side<select id="redstoneSide"><option>top</option><option>bottom</option><option>left</option><option>right</option><option>front</option><option selected>back</option></select></label><label>Signal strength <span id="strengthValue">15</span><input id="strength" type="range" min="0" max="15" value="15" /></label><div class="row"><button id="lightOn" class="btn primary">Power on</button><button id="lightOff" class="btn">Power off</button></div></div></article>
+          <article class="card glass"><p class="eyebrow">EXTENSIBLE CORE</p><h3>Built for more modules</h3><div class="feature-grid"><div>▣<b>Doors & pistons</b><span>Remote redstone actions</span></div><div>⌂<b>Base systems</b><span>Machine power control</span></div><div>◫<b>Inventories</b><span>Peripheral discovery ready</span></div><div>＋<b>Community ideas</b><span>Request features on GitHub</span></div></div></article>
+        </div>
+      </section>
+
+      <section id="devices" class="view"><article class="card glass"><div class="card-head"><div><p class="eyebrow">HARDWARE MESH</p><h2>Paired devices</h2></div><button class="btn primary pair-inline">+ Pair device</button></div><div id="deviceTable" class="table-wrap"></div></article></section>
+
+      <section id="setup" class="view">
+        <div class="two-col">
+          <article class="card glass"><p class="eyebrow">INSTALLER</p><h2>Connect CraftOS</h2><ol class="steps"><li><b>Create a pairing code</b><span>Use the Pair Device button in this dashboard.</span></li><li><b>Run the installer in CC:Tweaked</b><code id="installCommand">wget run https://your-domain/install.lua</code></li><li><b>Enter your dashboard URL + code</b><span>The installer saves its own device token and starts automatically on reboot.</span></li></ol><button id="copyInstall" class="btn">Copy installer command</button></article>
+          <article class="card glass"><p class="eyebrow">DEPLOYMENT</p><h3>Docker or standalone</h3><pre><code>docker compose up -d</code></pre><p class="muted">Persist <code>/app/data</code>. Set <code>CCNEXUS_PUBLIC_URL</code> when running behind a reverse proxy and <code>CCNEXUS_ADMIN_TOKEN</code> for a fixed admin credential.</p><div class="notice">For YouTube playback, the host needs <b>yt-dlp</b> and <b>FFmpeg</b>. The provided Docker image includes both.</div></article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="pairModal" class="modal"><div class="modal-card glass"><button class="close" id="closePair">×</button><p class="eyebrow">NEW DEVICE</p><h2>Pair CC:Tweaked</h2><p class="muted">Create a one-time code, then run the installer on your in-game computer or turtle.</p><button id="generateCode" class="btn primary">Generate 10-minute code</button><div id="pairCode" class="pair-code">------</div><code id="pairInstall">wget run https://your-domain/install.lua</code></div></div>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

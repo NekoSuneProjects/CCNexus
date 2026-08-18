@@ -229,7 +229,13 @@ app.post('/api/admin/fleet/update', requireAdmin, async (req, res) => {
 });
 app.post('/api/admin/fleet/update/cancel', requireAdmin, (req, res) => { if (updateTimer) clearTimeout(updateTimer); updateTimer = null; const old = store.state.system.updateSchedule; store.state.system.updateSchedule = null; store.save(); store.addActivity('system', `${req.user.username} cancelled the scheduled fleet update`, { userId: req.user.id, scheduleId: old?.id }); res.json({ ok: true }); });
 
-app.get('/install.lua', (req, res) => { res.type('text/plain').send(fs.readFileSync(path.join(root, 'lua', 'install.lua'), 'utf8')); });
+app.get('/install.lua', (req, res) => {
+  const template = fs.readFileSync(path.join(root, 'lua', 'install.lua'), 'utf8');
+  const detected = String(publicUrl(req) || '').trim().replace(/\/+$/, '');
+  const rendered = detected ? template.replace("'__CCNEXUS_AUTO_SERVER__'", JSON.stringify(detected)) : template;
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('text/plain').send(rendered);
+});
 app.get('/ccnexus.lua', (req, res) => { res.type('text/plain').send(fs.readFileSync(path.join(root, 'lua', 'ccnexus.lua'), 'utf8')); });
 app.use((req, res) => res.sendFile(path.join(root, 'public', 'index.html')));
 

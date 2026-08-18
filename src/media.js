@@ -38,11 +38,46 @@ export class MediaManager {
     }).catch(err => console.warn(`[CCNexus media tools] startup preparation failed: ${err.message}`));
     const tts = ttsEngineStatus();
     console.log(`[CCNexus TTS] ${tts.engine}; compute=${tts.compute}; gpuRequired=${tts.gpuRequired}`);
+
+    // Audio PCM is only sent to selected speaker nodes. This tiny state sync is
+    // broadcast to every online node in the workspace so Advanced Monitors can
+    // show Now Playing even when the monitor computer is not a speaker target,
+    // and so reconnecting/rebooted nodes recover the current stream state.
+    this.stateSyncTimer = setInterval(() => {
+      for (const [worldId, job] of this.active) {
+        if (!job.transient) this.broadcastMediaState(worldId, { source: job.sourceName });
+      }
+    }, 2000);
+    this.stateSyncTimer.unref?.();
   }
 
   state(worldId) {
     const s = this.store.mediaState(worldId);
     return { ...s, queue: [...s.queue], current: s.current ? { ...s.current } : null, tools: this.tools.status(), tts: ttsEngineStatus() };
+  }
+
+  worldNodeIds(worldId) {
+    return Object.values(this.store.state.devices || {})
+      .filter(device => device.worldId === worldId && this.socketFor(device.id)?.readyState === WebSocket.OPEN)
+      .map(device => device.id);
+  }
+
+  broadcastMediaState(worldId, overrides = {}) {
+    const s = this.store.mediaState(worldId);
+    const current = overrides.current === undefined ? s.current : overrides.current;
+    const status = String(overrides.status || s.status || 'idle').toLowerCase();
+    const source = overrides.source || this.active.get(worldId)?.sourceName || (current?.type === 'tts' ? 'local-tts' : current?.type === 'radio' ? 'radio-stream' : current ? 'direct-media' : '-');
+    const payload = {
+      type: 'audio_state',
+      status,
+      title: status === 'idle' ? 'Nothing playing' : String(overrides.title || current?.title || 'Untitled media'),
+      mediaType: status === 'idle' ? '-' : String(overrides.mediaType || current?.type || 'media'),
+      source: status === 'idle' ? '-' : String(source || '-'),
+      volume: clamp(overrides.volume ?? s.volume ?? current?.volume, 0, 3, 1),
+      error: String(overrides.error || s.error || '').slice(0, 300),
+      updatedAt: Date.now()
+    };
+    for (const id of this.worldNodeIds(worldId)) this.send(id, payload);
   }
 
   normalizeItem(input, deviceIds = []) {
@@ -77,16 +112,23 @@ export class MediaManager {
     const s = this.store.mediaState(worldId);
     if (s.current && s.status === 'paused') return this.resume(worldId);
     const item = s.queue.shift();
-    if (!item) { s.current = null; s.status = 'idle'; s.updatedAt = Date.now(); this.store.save(); return this.state(worldId); }
+    if (!item) {
+      s.current = null; s.status = 'idle'; s.updatedAt = Date.now(); this.store.save();
+      this.broadcastMediaState(worldId, { status: 'idle', current: null });
+      return this.state(worldId);
+    }
     const targets = item.deviceIds.filter(id => this.socketFor(id)?.readyState === WebSocket.OPEN);
     if (!targets.length) {
       s.current = null; s.status = 'idle'; s.updatedAt = Date.now();
       this.store.addActivity('audio', `Skipped ${item.title}: no selected speaker nodes are online`, { worldId, mediaId: item.id });
+      this.broadcastMediaState(worldId, { status: 'idle', current: null });
       return this.play(worldId);
     }
-    s.current = item; s.status = 'loading'; s.volume = item.volume; s.updatedAt = Date.now(); this.store.save();
+    s.current = item; s.status = 'loading'; s.volume = item.volume; s.error = ''; s.updatedAt = Date.now(); this.store.save();
+    this.broadcastMediaState(worldId, { status: 'loading' });
     const job = await this.spawnItem(item, targets, worldId, false);
     this.active.set(worldId, job); s.status = 'playing'; s.updatedAt = Date.now(); this.store.save();
+    this.broadcastMediaState(worldId, { status: 'playing', source: job.sourceName });
     this.store.addActivity('audio', `Playing ${item.title}`, { worldId, mediaId: item.id, type: item.type });
     job.done.finally(() => this.finish(worldId, job));
     return this.state(worldId);
@@ -132,13 +174,16 @@ export class MediaManager {
     source?.stderr.on('data', d => error += d.toString());
     ff.stderr.on('data', d => error += d.toString());
     for (const id of targets) this.send(id, { type: 'audio_stop' });
+    const sourceName = resolved?.source || (item.type === 'tts' ? 'local-tts' : item.type === 'radio' ? 'radio-stream' : 'direct-media');
     const meta = {
       type: 'audio_meta',
       title: item.title,
       mediaType: item.type,
-      source: resolved?.source || (item.type === 'tts' ? 'local-tts' : item.type === 'radio' ? 'radio-stream' : 'direct-media'),
+      source: sourceName,
       volume: targetVolume()
     };
+    // Keep the original metadata packet for speaker nodes. audio_state handles
+    // workspace-wide monitor state without delivering PCM to monitor-only nodes.
     for (const id of targets) this.send(id, meta);
 
     const framer = this.createAudioFramer(targets, targetVolume, item.type === 'radio' ? RADIO_PREBUFFER_BYTES : AUDIO_CHUNK_BYTES);
@@ -146,7 +191,7 @@ export class MediaManager {
 
     let resolveDone;
     const done = new Promise(resolve => { resolveDone = resolve; });
-    const job = { id: item.id, item, targets, ffmpeg: ff, source, framer, done, resolveDone, error: () => error, worldId, transient, autoNext: true, paused: false, closed: false };
+    const job = { id: item.id, item, targets, ffmpeg: ff, source, sourceName, framer, done, resolveDone, error: () => error, worldId, transient, autoNext: true, paused: false, closed: false };
     ff.on('error', e => { error += e.message; });
     source?.on('error', e => { error += e.message; });
     ff.on('close', code => {
@@ -212,6 +257,7 @@ export class MediaManager {
     if (job.transient || this.active.get(worldId) !== job) return;
     this.active.delete(worldId);
     const s = this.store.mediaState(worldId); s.current = null; s.status = 'idle'; s.updatedAt = Date.now(); this.store.save();
+    this.broadcastMediaState(worldId, { status: 'idle', current: null });
     if (job.autoNext) setTimeout(() => this.play(worldId).catch(err => this.fail(worldId, err)), 100);
   }
 
@@ -220,23 +266,31 @@ export class MediaManager {
     const s = this.store.mediaState(worldId); s.current = null; s.status = 'error'; s.error = String(err?.message || err).slice(0, 500); s.updatedAt = Date.now(); this.store.save();
     this.store.addActivity('audio', `Audio error: ${s.error}`, { worldId });
     const job = this.active.get(worldId); if (job) { job.autoNext = false; this.kill(job); this.active.delete(worldId); }
+    this.broadcastMediaState(worldId, { status: 'error', current: null, error: s.error, title: 'Audio error' });
   }
 
   pause(worldId) {
     const job = this.active.get(worldId); if (!job) return this.state(worldId);
     job.ffmpeg.stdout.pause(); job.paused = true; for (const id of job.targets) this.send(id, { type: 'audio_stop' });
-    const s = this.store.mediaState(worldId); s.status = 'paused'; s.updatedAt = Date.now(); this.store.save(); return this.state(worldId);
+    const s = this.store.mediaState(worldId); s.status = 'paused'; s.updatedAt = Date.now(); this.store.save();
+    this.broadcastMediaState(worldId, { status: 'paused', source: job.sourceName });
+    return this.state(worldId);
   }
 
   resume(worldId) {
     const job = this.active.get(worldId); if (!job) return this.play(worldId);
-    job.ffmpeg.stdout.resume(); job.paused = false; const s = this.store.mediaState(worldId); s.status = 'playing'; s.updatedAt = Date.now(); this.store.save(); return this.state(worldId);
+    job.ffmpeg.stdout.resume(); job.paused = false;
+    const s = this.store.mediaState(worldId); s.status = 'playing'; s.updatedAt = Date.now(); this.store.save();
+    this.broadcastMediaState(worldId, { status: 'playing', source: job.sourceName });
+    return this.state(worldId);
   }
 
   stop(worldId, clearQueue = false) {
     const job = this.active.get(worldId);
     if (job) { job.autoNext = false; this.active.delete(worldId); this.kill(job); for (const id of job.targets) this.send(id, { type: 'audio_stop' }); }
-    const s = this.store.mediaState(worldId); if (clearQueue) s.queue = []; s.current = null; s.status = 'idle'; s.updatedAt = Date.now(); this.store.save(); return this.state(worldId);
+    const s = this.store.mediaState(worldId); if (clearQueue) s.queue = []; s.current = null; s.status = 'idle'; s.updatedAt = Date.now(); this.store.save();
+    this.broadcastMediaState(worldId, { status: 'idle', current: null });
+    return this.state(worldId);
   }
 
   skip(worldId) {
@@ -244,7 +298,12 @@ export class MediaManager {
     return this.state(worldId);
   }
 
-  setVolume(worldId, volume) { const s = this.store.mediaState(worldId); s.volume = clamp(volume, 0, 3, 1); if (s.current) s.current.volume = s.volume; s.updatedAt = Date.now(); this.store.save(); return this.state(worldId); }
+  setVolume(worldId, volume) {
+    const s = this.store.mediaState(worldId); s.volume = clamp(volume, 0, 3, 1); if (s.current) s.current.volume = s.volume; s.updatedAt = Date.now(); this.store.save();
+    const job = this.active.get(worldId);
+    this.broadcastMediaState(worldId, { volume: s.volume, source: job?.sourceName });
+    return this.state(worldId);
+  }
   removeQueueItem(worldId, itemId) { const s = this.store.mediaState(worldId); s.queue = s.queue.filter(i => i.id !== itemId); s.updatedAt = Date.now(); this.store.save(); return this.state(worldId); }
   kill(job) { try { job.source?.kill('SIGKILL'); } catch {} try { job.ffmpeg?.kill('SIGKILL'); } catch {} }
 
@@ -273,6 +332,7 @@ export class MediaManager {
     const item = this.normalizeItem({ type: 'tts', text, title: 'Announcement', voice: options.voice || 'en', rate: options.rate || 165, volume: options.volume ?? 1.15 }, targets);
     const transient = await this.spawnItem(item, targets, worldId, true); await transient.done;
     if (wasPlaying && this.active.get(worldId) === current) current.ffmpeg.stdout.resume();
+    if (current && this.active.get(worldId) === current) this.broadcastMediaState(worldId, { status: current.paused ? 'paused' : 'playing', source: current.sourceName });
     return { ok: true };
   }
 }

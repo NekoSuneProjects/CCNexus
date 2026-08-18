@@ -4,7 +4,7 @@
 
 local CONFIG = '/ccnexus/config.json'
 local FLEET_CONFIG = '/ccnexus/turtle-fleet.json'
-local VERSION = '0.3.0-fleet.1'
+local VERSION = '0.3.0-fleet.2'
 
 if not turtle then error('CCNexus Turtle Fleet Agent must run on a turtle.', 0) end
 if not fs.exists(CONFIG) then error('CCNexus config missing. Run the normal CCNexus installer first.', 0) end
@@ -20,6 +20,8 @@ local worldMeta = { id = config.worldId, name = config.worldName or 'Minecraft W
 local job, lastJob
 local lastSave = 0
 local servicingFuel = false
+local refuelQueued = false
+local lastAutoRefuelAttempt = 0
 
 local fleet = {
   stations = {},
@@ -167,7 +169,7 @@ end
 local function moveForward(dig)
   if not localRefuel(1) then return false, 'out of fuel' end
   local last = 'blocked'
-  for _ = 1, dig and 20 or 1 do
+  for _ = 1, (dig and 20 or 1) do
     local ok, err = turtle.forward()
     if ok then updateMove('forward'); return true end
     last = err or last
@@ -299,7 +301,7 @@ local function refuelFromStation(station)
   local slot = fleet.fuel.slot
   turtle.select(slot)
   local tries = 0
-  while tries < 16 do
+  while tries < 64 do
     local level = turtle.getFuelLevel()
     if level == 'unlimited' or (tonumber(level) and tonumber(level) >= fleet.fuel.target) then break end
     if turtle.getItemCount(slot) == 0 then
@@ -309,7 +311,7 @@ local function refuelFromStation(station)
     if not turtle.refuel(0) then
       sideCall(station.side or 'down', 'drop')
       servicingFuel = false
-      return false, 'fuel depot supplied a non-fuel item; use a dedicated fuel-only chest'
+      return false, 'fuel depot supplied a non-fuel item; use a dedicated fuel-only chest and keep reserved fuel slot clear'
     end
     turtle.refuel(1)
     tries = tries + 1
@@ -446,6 +448,7 @@ end
 local function farmWorker(spec)
   local station = fleet.stations[spec.station or 'crop']
   if not station then return setJobFailure('crop station not configured') end
+  local fuelOk, fuelErr = maybeServiceFuel(false); if not fuelOk and not localRefuel(32) then return setJobFailure(fuelErr or 'low fuel') end
   local width, length = clamp(spec.width or 9, 1, 64), clamp(spec.length or 9, 1, 64)
   local seedSlot = clamp(spec.seedSlot or 15, 1, 16)
   local cycles = clamp(spec.cycles or 1, 1, 1000)
@@ -462,7 +465,7 @@ local function farmWorker(spec)
     ok, err = navigateTo(station, false); if not ok then return setJobFailure(err) end
     if startHeading ~= nil then turnTo(startHeading) end
     if spec.baseStation then ok, err = unloadAt(spec.baseStation, keep); if not ok then return setJobFailure(err) end; navigateTo(station, false); if startHeading ~= nil then turnTo(startHeading) end end
-    local fuelOk, fuelErr = maybeServiceFuel(false); if not fuelOk and not localRefuel(32) then return setJobFailure(fuelErr) end
+    fuelOk, fuelErr = maybeServiceFuel(false); if not fuelOk and not localRefuel(32) then return setJobFailure(fuelErr) end
     if cycle < cycles and interval > 0 then local waited = 0; while waited < interval do if not waitJob() then return false end; sleep(math.min(1, interval-waited)); waited=waited+1 end end
   end
   job.detail = 'Crop job complete'
@@ -472,6 +475,7 @@ end
 local function treeWorker(spec)
   local station = fleet.stations[spec.station or 'tree']
   if not station then return setJobFailure('tree station not configured') end
+  local fuelOk, fuelErr = maybeServiceFuel(false); if not fuelOk and not localRefuel(32) then return setJobFailure(fuelErr or 'low fuel') end
   local width, length = clamp(spec.width or 8, 1, 64), clamp(spec.length or 8, 1, 64)
   local saplingSlot = clamp(spec.saplingSlot or 15, 1, 16)
   job.total = width * length
@@ -588,7 +592,8 @@ local function handleCommand(c)
     if trim(c.fuelStation) ~= '' then fleet.fuel.station = trim(c.fuelStation):lower() end
     if c.fuelSlot ~= nil then fleet.fuel.slot = clamp(c.fuelSlot,1,16) end
     saveFleet(true); sendTelemetry()
-  elseif t == 'refuel_now' then os.queueEvent('ccnexus_fleet_job',{type='refuel'})
+  elseif t == 'refuel_now' then
+    if job then send({type='event',message='Cannot start refuel service while another job is active'}) else refuelQueued=true; os.queueEvent('ccnexus_fleet_job',{type='refuel'}) end
   elseif t == 'delivery_start' or t == 'farm_start' or t == 'tree_farm_start' or t == 'tree_patrol_start' or t == 'quarry_start' then
     if job then send({type='event',message='A turtle job is already active'}) else local spec={}; for k,v in pairs(c) do spec[k]=v end; if t=='tree_farm_start' then spec.type='tree_patrol_start' else spec.type=t end; os.queueEvent('ccnexus_fleet_job',spec) end
   elseif (t == 'job_pause' or t == 'quarry_pause') and job then job.status='paused'; job.detail='Paused from dashboard'
@@ -601,10 +606,11 @@ end
 local function jobLoop()
   while running do
     local _, spec = os.pullEvent('ccnexus_fleet_job')
+    refuelQueued = false
     job = spec; job.status='running'; job.done=0; job.total=1; job.error=nil; job.detail='Starting'
     send({type='event',message='Started '..tostring(job.type)})
-    local ok, result, err = pcall(function()
-      if spec.type == 'refuel' then local r,e = maybeServiceFuel(true); return r,e
+    local ok, result, detail = pcall(function()
+      if spec.type == 'refuel' or spec.type == 'refuel_auto' then local r,e = maybeServiceFuel(true); return r,e
       elseif spec.type == 'delivery_start' then return deliveryWorker(spec)
       elseif spec.type == 'farm_start' then return farmWorker(spec)
       elseif spec.type == 'tree_patrol_start' then return treeWorker(spec)
@@ -612,11 +618,11 @@ local function jobLoop()
       end
       return false, 'unknown fleet job: '..tostring(spec.type)
     end)
-    if not ok then result=false; err=tostring(result) end
+    if not ok then detail = tostring(result); result = false end
     local status
     if job.status == 'stopping' then status='stopped'
     elseif result then status='complete'
-    else status='failed'; job.error = job.error or tostring(err or job.detail or 'job failed'); job.detail=job.error end
+    else status='failed'; job.error = job.error or tostring(detail or job.detail or 'job failed'); job.detail=job.error end
     job.status=status
     lastJob={type=job.type,status=status,done=job.done,total=job.total,detail=job.detail,error=job.error,at=now()}
     sendTelemetry(); send({type='event',message=(status=='complete' and 'Completed ' or status=='failed' and 'Failed ' or 'Stopped ')..tostring(job.type)..(job.error and (': '..job.error) or ''),job=lastJob})
@@ -647,7 +653,20 @@ local function socketLoop()
 end
 
 local function heartbeat()
-  while running do sleep(3); render(); if ws then sendTelemetry() end end
+  while running do
+    sleep(3)
+    render()
+    if ws then sendTelemetry() end
+    if not job and not servicingFuel and not refuelQueued then
+      local level = turtle.getFuelLevel()
+      local fuelStation = fleet.stations[fleet.fuel.station]
+      if level ~= 'unlimited' and tonumber(level) and tonumber(level) < fleet.fuel.low and fuelStation and now() - lastAutoRefuelAttempt >= 30000 then
+        lastAutoRefuelAttempt = now()
+        refuelQueued = true
+        os.queueEvent('ccnexus_fleet_job', { type='refuel_auto' })
+      end
+    end
+  end
 end
 
 render()

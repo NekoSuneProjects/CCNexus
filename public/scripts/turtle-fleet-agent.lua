@@ -5,6 +5,7 @@
 local CONFIG='/ccnexus/config.json'
 local CORE='/ccnexus/turtle-fleet-agent-core.lua'
 local SHIM='/ccnexus/flat-gps-shim.lua'
+local TELEMETRY='/ccnexus/flat-gps-telemetry.lua'
 
 if not fs.exists(CONFIG) then error('CCNexus config missing. Run the normal installer first.',0) end
 local h=fs.open(CONFIG,'r'); local cfg=textutils.unserializeJSON(h.readAll()); h.close()
@@ -30,6 +31,10 @@ if not shimOk then
   print('[CCNexus Fleet] Flat GPS update failed: '..tostring(shimErr))
   if not fs.exists(SHIM) then error('Flat GPS shim unavailable.',0) end
 end
+local telemetryOk,telemetryErr=download(server..'/scripts/flat-gps-telemetry.lua',TELEMETRY,300)
+if not telemetryOk then
+  print('[CCNexus Fleet] Flat GPS telemetry update failed: '..tostring(telemetryErr))
+end
 local coreOk,coreErr=download(server..'/scripts/turtle-fleet-agent-core.lua',CORE,5000)
 if not coreOk then
   print('[CCNexus Fleet] Core update failed: '..tostring(coreErr))
@@ -43,5 +48,6 @@ if ok then
 else
   error('Unable to load Flat Nexus GPS: '..tostring(flat),0)
 end
+if fs.exists(TELEMETRY) then pcall(dofile,TELEMETRY) end
 
 shell.run(CORE)

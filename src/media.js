@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { MediaToolchain } from './toolchain.js';
 import { YoutubeResolver } from './youtube-resolver.js';
+import { synthesizeCpuTts, ttsEngineStatus } from './tts.js';
 
 function clamp(v, min, max, fallback) { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
 function isYoutube(url) { return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(String(url || '')); }
@@ -35,11 +36,13 @@ export class MediaManager {
       const deno = info.deno ? `${info.deno.version}` : 'unavailable';
       console.log(`[CCNexus media tools] yt-dlp ${yt}; ${deno}`);
     }).catch(err => console.warn(`[CCNexus media tools] startup preparation failed: ${err.message}`));
+    const tts = ttsEngineStatus();
+    console.log(`[CCNexus TTS] ${tts.engine}; compute=${tts.compute}; gpuRequired=${tts.gpuRequired}`);
   }
 
   state(worldId) {
     const s = this.store.mediaState(worldId);
-    return { ...s, queue: [...s.queue], current: s.current ? { ...s.current } : null, tools: this.tools.status() };
+    return { ...s, queue: [...s.queue], current: s.current ? { ...s.current } : null, tools: this.tools.status(), tts: ttsEngineStatus() };
   }
 
   normalizeItem(input, deviceIds = []) {
@@ -93,9 +96,18 @@ export class MediaManager {
     let ff, source, resolved = null;
     const targetVolume = () => transient ? item.volume : this.store.mediaState(worldId).volume;
     if (item.type === 'tts') {
-      source = spawn(process.env.TTS_BIN || 'espeak-ng', ['--stdout', '-v', item.voice, '-s', String(item.rate), item.text], { stdio: ['ignore', 'pipe', 'pipe'] });
-      ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-ac', '1', '-ar', '48000', '-f', 's8', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
-      source.stdout.pipe(ff.stdin);
+      const engine = String(process.env.CCNEXUS_TTS_ENGINE || 'wasm').trim().toLowerCase();
+      if (engine === 'external') {
+        source = spawn(process.env.TTS_BIN || 'espeak-ng', ['--stdout', '-v', item.voice, '-s', String(item.rate), item.text], { stdio: ['ignore', 'pipe', 'pipe'] });
+        ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-ac', '1', '-ar', '48000', '-f', 's8', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+        source.stdout.pipe(ff.stdin);
+        resolved = { source: 'external-tts' };
+      } else {
+        const wav = await synthesizeCpuTts(item.text, { voice: item.voice, rate: item.rate });
+        ff = spawn(process.env.FFMPEG_BIN || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-ac', '1', '-ar', '48000', '-f', 's8', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+        ff.stdin.end(wav);
+        resolved = { source: 'cpu-wasm-tts' };
+      }
     } else {
       let input = item.url;
       if (item.type === 'url' && isYoutube(item.url)) {

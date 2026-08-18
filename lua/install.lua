@@ -1,8 +1,33 @@
-local function trim(s) return (s:gsub('^%s+', ''):gsub('%s+$', '')) end
+local AUTO_SERVER = '__CCNEXUS_AUTO_SERVER__'
+local args = { ... }
+
+local function trim(s) return (tostring(s or ''):gsub('^%s+', ''):gsub('%s+$', '')) end
 local function normalize(url)
   url = trim(url)
+  if url == '' then return '' end
   if not url:match('^https?://') then url = 'https://' .. url end
   return url:gsub('/+$', '')
+end
+
+local function validServer(url)
+  url = trim(url)
+  return url ~= '' and url ~= '__CCNEXUS_AUTO_SERVER__' and url:match('^https?://') ~= nil
+end
+
+local server
+local detected = false
+
+-- When /install.lua is served by CCNexus, the server replaces AUTO_SERVER with
+-- the same public origin which served this file. Stock CC:Tweaked `wget run`
+-- does not expose its source URL to the downloaded Lua chunk, so injection is
+-- the only reliable way to auto-detect the custom domain without an extra arg.
+if validServer(AUTO_SERVER) then
+  server = normalize(AUTO_SERVER)
+  detected = true
+elseif validServer(args[1]) then
+  -- Useful when a locally copied installer is launched with an explicit URL:
+  -- install.lua https://ccnexus.example.com
+  server = normalize(args[1])
 end
 
 term.clear(); term.setCursorPos(1, 1)
@@ -11,8 +36,19 @@ print('======================')
 print('Each pairing code is tied to one Server/World workspace.')
 print('The startup hook checks for the newest CCNexus agent before every boot.')
 print('')
-write('Dashboard domain / URL: ')
-local server = normalize(read())
+
+if server then
+  print('Dashboard: ' .. server .. (detected and '  [auto-detected]' or '  [argument]'))
+else
+  print('No hosted CCNexus URL could be detected.')
+  print('This normally means install.lua was saved/run locally.')
+  write('Dashboard domain / URL: ')
+  repeat
+    server = normalize(read())
+    if server == '' then write('Please enter a dashboard URL: ') end
+  until server ~= ''
+end
+
 write('10-minute pairing code: ')
 local code = trim(read())
 write('Device name (optional): ')
@@ -69,6 +105,7 @@ local startup = fs.open('/startup/ccnexus.lua', 'w'); startup.write(startupCode)
 print('\nInstalled successfully!')
 print('Device: ' .. label)
 print('Workspace: ' .. tostring(data.worldName or data.worldId))
+print('Dashboard: ' .. server)
 print('Future dashboard fleet updates can warn, reboot, then self-update this node.')
 print('Starting CCNexus agent...')
 sleep(1)

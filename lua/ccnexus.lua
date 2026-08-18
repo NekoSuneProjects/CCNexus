@@ -125,6 +125,14 @@ local function uiField(t, y, label, value, color)
   end
 end
 
+local function audioStatusColor(status)
+  status = tostring(status or 'IDLE'):upper()
+  if status == 'PLAYING' then return colors.lime end
+  if status == 'BUFFERING' or status == 'PAUSED' then return colors.yellow end
+  if status == 'ERROR' then return colors.red end
+  return colors.lightGray
+end
+
 local function renderTerminal()
   local t = term.current()
   if not t then return end
@@ -146,8 +154,7 @@ local function renderTerminal()
   uiField(t, 6, 'TYPE', tostring(config.kind or (turtle and 'turtle' or 'computer')):upper(), colors.white)
 
   if h >= 11 then uiWriteLine(t, 8, '  STATUS ' .. string.rep('-', math.max(0, w - 9)), colors.gray, colors.black) end
-  local audioColor = ui.audio == 'PLAYING' and colors.lime or ui.audio == 'BUFFERING' and colors.yellow or colors.lightGray
-  uiField(t, h >= 11 and 9 or 7, 'AUDIO', ui.audio, audioColor)
+  uiField(t, h >= 11 and 9 or 7, 'AUDIO', ui.audio, audioStatusColor(ui.audio))
 
   local jobText = 'IDLE'
   local jobColor = colors.lightGray
@@ -415,8 +422,7 @@ local function renderMonitor(mon)
       writeAt(mon, 3, 12, 'AE2: ' .. tostring(#(ae.bridges or {})) .. ' bridge(s) / ' .. tostring(#(ae.items or {})) .. ' indexed items', colors.lightBlue)
 
       fillLine(mon, 14, ' AUDIO NEXUS', colors.cyan, colors.black)
-      local audioColor = ui.audio == 'PLAYING' and colors.lime or ui.audio == 'BUFFERING' and colors.yellow or colors.lightGray
-      writeAt(mon, 3, 15, ui.audio .. '  |  ' .. tostring(ui.trackTitle or 'Nothing playing'), audioColor)
+      writeAt(mon, 3, 15, ui.audio .. '  |  ' .. tostring(ui.trackTitle or 'Nothing playing'), audioStatusColor(ui.audio))
       if h >= 18 then writeAt(mon, 3, 16, tostring(ui.trackType or '-'):upper() .. '  |  ' .. tostring(ui.trackSource or '-') .. '  |  volume ' .. tostring(ui.volume or 1) .. 'x', colors.lightGray) end
 
       if turtle and h >= 20 then
@@ -428,9 +434,8 @@ local function renderMonitor(mon)
 
     elseif monitorPage == 'music' then
       fillLine(mon, 4, ' AUDIO NEXUS // NOW PLAYING', colors.cyan, colors.black)
-      local audioColor = ui.audio == 'PLAYING' and colors.lime or ui.audio == 'BUFFERING' and colors.yellow or colors.lightGray
       writeAt(mon, 3, 6, 'STATUS', colors.gray)
-      writeAt(mon, 15, 6, ui.audio, audioColor)
+      writeAt(mon, 15, 6, ui.audio, audioStatusColor(ui.audio))
       writeAt(mon, 3, 8, 'NOW PLAYING', colors.gray)
       monitorWrapped(mon, 10, ui.trackTitle or 'Nothing playing', math.max(1, math.min(4, h - 15)), colors.white)
       if h >= 16 then
@@ -529,6 +534,33 @@ end
 local function stopAudio()
   for _, s in ipairs(getSpeakers()) do pcall(function() s.p.stop() end) end
   setUi(nil, 'IDLE', 'Audio stopped')
+  renderMonitors()
+end
+
+local function applyAudioState(msg)
+  local status = tostring(msg.status or 'idle'):upper()
+  if status == 'LOADING' then status = 'BUFFERING' end
+  if status ~= 'PLAYING' and status ~= 'PAUSED' and status ~= 'BUFFERING' and status ~= 'ERROR' then status = 'IDLE' end
+
+  if status == 'IDLE' then
+    ui.trackTitle = 'Nothing playing'
+    ui.trackType = '-'
+    ui.trackSource = '-'
+  else
+    if msg.title ~= nil then ui.trackTitle = tostring(msg.title) end
+    if msg.mediaType ~= nil then ui.trackType = tostring(msg.mediaType) end
+    if msg.source ~= nil then ui.trackSource = tostring(msg.source) end
+  end
+  if msg.volume ~= nil then ui.volume = tonumber(msg.volume) or ui.volume or 1 end
+
+  local message
+  if status == 'PLAYING' then message = 'Now playing: ' .. tostring(ui.trackTitle)
+  elseif status == 'PAUSED' then message = 'Audio paused: ' .. tostring(ui.trackTitle)
+  elseif status == 'BUFFERING' then message = 'Loading: ' .. tostring(ui.trackTitle)
+  elseif status == 'ERROR' then message = 'Audio error: ' .. tostring(msg.error or 'unknown error')
+  else message = 'Audio idle' end
+
+  setUi(nil, status, message)
   renderMonitors()
 end
 
@@ -869,6 +901,8 @@ local function socketLoop()
               setUi('ONLINE', nil, 'Workspace synced: ' .. tostring(msg.world.name or msg.world.id))
               renderMonitors()
             elseif msg.type == 'command' and msg.command then handleCommand(msg.command)
+            elseif msg.type == 'audio_state' then
+              applyAudioState(msg)
             elseif msg.type == 'audio_meta' then
               ui.trackTitle = tostring(msg.title or 'Untitled media')
               ui.trackType = tostring(msg.mediaType or 'media')

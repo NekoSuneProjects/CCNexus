@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node -r dotenv/config src/server.js",
     "dev": "node --watch -r dotenv/config src/server.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check src/database.js && node --check src/toolchain.js && node --check src/youtube-resolver.js && node --check src/media.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check src/database.js && node --check src/toolchain.js && node --check src/youtube-resolver.js && node --check src/tts.js && node --check src/media.js && node --check public/app.js"
   },
   "engines": { "node": ">=22" },
   "dependencies": {
@@ -19,6 +19,7 @@
     "mongodb": "^7.5.0",
     "mysql2": "^3.23.2",
     "pg": "^8.22.0",
+    "text2wav": "^0.0.14",
     "ws": "^8.18.3"
   }
 }

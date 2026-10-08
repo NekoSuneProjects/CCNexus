@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible CCNexus dashboard, server, Docker, or CraftOS agent problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Pair a turtle
+        2. Open Turtle Fleet
+        3. Start an 8x8x8 quarry
+        4. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CCNexus version/tag
+  - type: input
+    id: minecraft
+    attributes:
+      label: Minecraft + CC:Tweaked version
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: Deployment
+      options: [Docker, Standalone Node.js, Other]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell

@@ -1,0 +1,14 @@
+services:
+  ccnexus:
+    image: ghcr.io/nekosuneprojects/ccnexus:latest
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    environment:
+      PORT: ${PORT:-3000}
+      CCNEXUS_PUBLIC_URL: ${CCNEXUS_PUBLIC_URL:-}
+    volumes:
+      - ./data:/app/data

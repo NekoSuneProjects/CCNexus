@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CCNexus — Flat Nexus GPS</title>
+<link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/v2.css"><link rel="stylesheet" href="/v3.css">
+<style>
+body{background:#080d14;color:#eaf8ff;margin:0;font-family:Inter,system-ui,sans-serif}.shell{max-width:1100px;margin:auto;padding:24px}.card{background:#0e1723;border:1px solid #203449;border-radius:18px;padding:18px;margin:14px 0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.muted{color:#8ea3b8}.code{background:#05090e;border:1px solid #1e3247;border-radius:10px;padding:11px;font-family:ui-monospace,monospace;word-break:break-all;user-select:all}.good{color:#76f4a8}.warn{color:#ffd770}pre{white-space:pre-wrap}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button{border:1px solid #2b4259;background:#132131;color:#eaf8ff;border-radius:10px;padding:9px 12px;cursor:pointer}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+</style>
+</head><body><div class="shell">
+<div class="row"><div><div class="muted">CCNEXUS / POSITIONING</div><h1>Flat Nexus GPS + Quarry Markers</h1><div class="muted">Four flat corner computers provide positioning, quarry bounds, surface Y=0 and the NE service anchor.</div></div><button onclick="location.href='/turtle-fleet.html'">Turtle Fleet</button><button onclick="location.href='/'">Dashboard</button></div>
+<div class="card"><h2>Physical layout</h2><pre>NW ●────────────────────────● NE
+   │                        │
+   │       QUARRY AREA      │
+   │                        │
+SW ●────────────────────────● SE</pre><p><b>Requirements:</b> put all four computer blocks on the same Minecraft Y level, align the rectangle edges with block rows, and mount a normal Wireless Modem on <b>top</b> of every marker computer. The four machines can be as large a rectangle as wireless range permits.</p><p class="warn">The turtle must hear all four markers at once for a fresh Flat GPS fix. When it later goes underground/out of range, the Fleet agent continues from its saved position using dead reckoning.</p></div>
+<div class="grid">
+<section class="card"><h2>NW marker</h2><div class="code marker-install" data-role="NW"></div></section>
+<section class="card"><h2>NE marker / service corner</h2><div class="code marker-install" data-role="NE"></div></section>
+<section class="card"><h2>SW marker</h2><div class="code marker-install" data-role="SW"></div></section>
+<section class="card"><h2>SE marker</h2><div class="code marker-install" data-role="SE"></div></section>
+</div>
+<div class="card"><h2>What each marker should show</h2><pre class="good">FLAT NEXUS READY / RECTANGLE VERIFIED
+Width ...  Length ...
+Local anchor X ... Y 0 Z ...</pre><p>If it says <b>CALIBRATING</b>, wait a few seconds. If it stays there, one adjacent marker is outside wireless range or the top-mounted modems do not form a flat rectangle.</p></div>
+<div class="card"><h2>Test a paired turtle</h2><div id="test" class="code"></div><p>The result should show <b>Source: NEXUS FLAT GPS</b>. On the marker surface, Y should be around 0. As the turtle mines down, Y becomes -1, -2, -3 and so on.</p></div>
+<div class="card"><h2>Marker-controlled quarry</h2><p>Once the four markers are ready, use the same rectangle as the quarry boundary. NE is the surface/service anchor.</p><div id="mine" class="code"></div><p>Emergency return without starting a new quarry:</p><div id="rescue" class="code"></div></div>
+<div class="card"><h2>Fleet turtles</h2><p>The Fleet agent bootstrap loads this Flat GPS system automatically on boot. Existing Fleet turtles only need a reboot/Force Update after the CCNexus server has pulled this branch.</p></div>
+</div>
+<script>
+const o=location.origin,q='Quarry1';
+for(const el of document.querySelectorAll('.marker-install')){const r=el.dataset.role;el.textContent=`wget ${o}/scripts/flat-gps-marker.lua /startup/flat-gps-marker.lua\n/startup/flat-gps-marker.lua ${q} ${r}`}
+document.querySelector('#test').textContent=`wget run ${o}/scripts/flat-gps-test.lua ${q}`;
+document.querySelector('#mine').textContent=`wget run ${o}/scripts/flat-quarry.lua ${q} mine`;
+document.querySelector('#rescue').textContent=`wget run ${o}/scripts/flat-quarry.lua ${q} rescue`;
+</script></body></html>
